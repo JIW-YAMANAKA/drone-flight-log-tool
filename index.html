@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>飛行履歴CSV → 飛行日誌.xlsx 転記ツール</title>
+  <script src="lib/jszip.min.js"></script>
+  <script src="lib/FileSaver.min.js"></script>
+  <!-- MSAL.jsは社内CDN制限対策のため、ログイン時に複数候補から動的読み込みします -->
+  <style>
+    :root { --bg:#f6f7fb; --panel:#fff; --text:#172033; --muted:#667085; --line:#d9dde8; --accent:#2563eb; --accent2:#0f766e; --danger:#b42318; --warn:#b54708; --ok:#067647; }
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);line-height:1.55}
+    .wrap{max-width:1320px;margin:0 auto;padding:24px 18px 48px} header{margin-bottom:16px}
+    h1{margin:0 0 6px;font-size:clamp(23px,3vw,32px);letter-spacing:.02em}.lead{margin:0;color:var(--muted)}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 10px 24px rgba(16,24,40,.06)}
+    h2{margin:0 0 12px;font-size:18px}.wide-grid{display:grid;grid-template-columns:1.25fr 2fr;gap:16px;align-items:start}
+    @media(max-width:920px){.wide-grid{grid-template-columns:1fr}}
+    .input-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.input-grid .span2{grid-column:span 2}.input-grid .span4{grid-column:span 4}
+    @media(max-width:900px){.input-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.input-grid .span4{grid-column:span 2}}
+    @media(max-width:560px){.input-grid{grid-template-columns:1fr}.input-grid .span2,.input-grid .span4{grid-column:span 1}}
+    label{display:block;font-weight:750;margin:0 0 6px} input,select,textarea{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:12px;background:#fff;font:inherit} textarea{min-height:42px;resize:vertical}.hint{color:var(--muted);font-size:12.5px;margin-top:6px}.mini{font-size:12.5px;color:var(--muted)}
+    button{appearance:none;border:0;border-radius:14px;background:var(--accent);color:#fff;font:inherit;font-weight:800;padding:11px 16px;cursor:pointer;box-shadow:0 8px 16px rgba(37,99,235,.18)} button:disabled{background:#98a2b3;cursor:not-allowed;box-shadow:none}.secondary{background:var(--accent2)}.ghost{background:#eef4ff;color:#1849a9;box-shadow:none}.danger{background:#fef3f2;color:var(--danger);box-shadow:none;border:1px solid #fecdca}
+    .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px;align-items:center}.status{margin-top:12px;padding:12px;border-radius:12px;background:#eef4ff;color:#1849a9}.status.ok{background:#ecfdf3;color:var(--ok)}.status.warn{background:#fffaeb;color:var(--warn)}.status.err{background:#fef3f2;color:var(--danger)}
+    .optional{margin-top:14px;border-top:1px dashed var(--line);padding-top:14px}.entry{display:grid;grid-template-columns:110px 110px 1fr 40px;gap:10px;align-items:end;margin-top:10px}.report-entry{grid-template-columns:90px 1.5fr 145px 1.5fr 1fr 40px}@media(max-width:900px){.entry,.report-entry{grid-template-columns:1fr}.entry .remove,.report-entry .remove{width:100%}}
+    details{margin-top:16px;color:var(--muted)} summary{cursor:pointer;font-weight:700;color:var(--text)} code{background:#f2f4f7;padding:2px 5px;border-radius:6px} ul{margin:8px 0 0;padding-left:20px}.pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef4ff;color:#1849a9;font-size:12px;font-weight:700}
+    table{width:100%;border-collapse:collapse;font-size:13px} th,td{border-bottom:1px solid var(--line);text-align:left;padding:8px;vertical-align:top} th{background:#f2f4f7;position:sticky;top:0;z-index:1}.table-wrap{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff}.mt{margin-top:16px}.hide{display:none!important}
+    .checkgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}.checkgrid label{font-weight:600;border:1px solid var(--line);border-radius:12px;padding:8px 10px;background:#fff;display:flex;gap:8px;align-items:flex-start}.checkgrid input{width:auto;margin-top:3px}.small-note{font-size:12px;color:var(--muted);margin-top:6px}
+
+    .inline-check{display:flex;gap:8px;align-items:flex-start;font-weight:700;margin-top:10px}
+    .inline-check input{width:auto;margin-top:4px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    @media(max-width:900px){.checkgrid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>飛行履歴CSV → 飛行日誌.xlsx 転記ツール</h1>
+      <p class="lead">CSVを読み込んで、飛行日誌テンプレートへ転記します。必要に応じて年度管理ブックから総飛行時間を取得し、年度管理ブックも対象セルだけ更新します。</p>
+    </header>
+
+
+    <section class="card">
+      <h2>0. OneDrive年度管理（複数人共有対応）</h2>
+      <div class="input-grid">
+        <div class="span2">
+          <label for="msClientId">Microsoft Entra Client ID</label>
+          <input id="msClientId" type="text" placeholder="アプリケーション（クライアント）ID" autocomplete="off" />
+          <div class="hint">会社テナントで作成されたSPAアプリ登録のClient IDを入れます。</div>
+        </div>
+        <div class="span2">
+          <label for="msTenant">Tenant ID / ドメイン</label>
+          <input id="msTenant" type="text" placeholder="未入力なら organizations" autocomplete="off" />
+          <div class="hint">会社アカウント限定。Tenant ID または会社の onmicrosoft.com ドメインを指定できます。</div>
+        </div>
+        <div class="span4">
+          <label for="oneDriveYearbookShareUrl">年度管理ブックの共有リンク（複数人用・推奨）</label>
+          <input id="oneDriveYearbookShareUrl" class="mono" type="url" placeholder="OneDriveの共有リンクを貼り付け。空欄なら下の自分のOneDriveパスを使用" />
+          <div class="hint">他の人も同じ年度管理ブックを更新する場合は、編集可能な共有リンクをここに入れます。利用者にもそのファイルの編集権限が必要です。</div>
+        </div>
+        <div class="span4">
+          <label for="oneDriveYearbookPath">年度管理ブックのOneDriveパス（個人用 fallback）</label>
+          <input id="oneDriveYearbookPath" class="mono" type="text" value="01.ドローン飛行日誌/年度管理/2026_飛行時間.xlsx" />
+          <div class="hint">共有リンクが空欄の場合だけ、ログインした本人のOneDriveからこのパスのExcelを取得・上書きします。</div>
+        </div>
+        <div class="span4">
+          <label for="oneDriveOutputFolderShareUrl">飛行日誌保存先フォルダの共有リンク（任意）</label>
+          <input id="oneDriveOutputFolderShareUrl" class="mono" type="url" placeholder="OneDriveの保存先フォルダ共有リンクを貼り付け。空欄なら下の本人OneDriveパスを使用" />
+          <div class="hint">複数人で同じ保存先へ飛行日誌を格納する場合は、編集可能なフォルダ共有リンクをここに入れます。保存時は、このフォルダ内に「機体登録番号_Vehicle Name」フォルダを自動作成し、その中へ格納します。Excelファイルではなくフォルダのリンクを指定してください。</div>
+        </div>
+        <div class="span4">
+          <label for="oneDriveOutputFolderPath">飛行日誌保存先フォルダのOneDriveパス（個人用 fallback）</label>
+          <input id="oneDriveOutputFolderPath" class="mono" type="text" value="01.ドローン飛行日誌/出力" />
+          <div class="hint">保存先フォルダ共有リンクが空欄の場合だけ、ログインした本人のOneDrive内のこのフォルダへ保存します。保存時は、このフォルダ内に「機体登録番号_Vehicle Name」フォルダを自動作成し、その中へ格納します。</div>
+        </div>
+      </div>
+      <label class="inline-check">
+        <input id="useOneDriveYearbook" type="checkbox" checked />
+        <span>OneDrive年度管理を使う（失敗時は下の手動選択ブックを使用）</span>
+      </label>
+      <label class="inline-check">
+        <input id="saveDiaryToOneDrive" type="checkbox" checked />
+        <span>作成した飛行日誌をOneDriveにも保存する（ダウンロードも残す）</span>
+      </label>
+      <div class="actions">
+        <button id="saveOneDriveSettingsBtn" type="button" class="ghost">OneDrive設定を保存</button>
+        <button id="msLoginBtn" type="button">会社アカウントでログイン</button>
+        <button id="msLogoutBtn" type="button" class="ghost">ログアウト</button>
+        <button id="oneDriveTestBtn" type="button" class="secondary">年度管理読込テスト</button>
+      </div>
+      <div id="oneDriveStatus" class="status">OneDrive未接続です。Client IDを入れてログインしてください。複数人で使う場合は年度管理ブックの共有リンクを設定します。</div>
+      <details>
+        <summary>OneDrive連携の注意</summary>
+        <ul>
+          <li>共有リンクを入れた場合は、誰がログインしても同じ年度管理ブックを取得し、対象セルだけ更新します。</li>
+          <li>共有リンクが空欄の場合は、従来どおりログインした本人のOneDriveパスを見に行きます。</li>
+          <li>飛行日誌は従来どおりダウンロードし、チェックONなら指定したOneDriveフォルダにも保存します。</li>
+          <li>この方式は年度管理ブックを取得して内容を確認し、書き込みはExcel APIで対象セルだけ更新します。</li>
+          <li>Microsoftログインを使うため、HTMLは <code>https://</code> または <code>http://localhost</code> 上で開く必要があります。</li>
+          <li>会社側でアプリ登録・<code>Files.ReadWrite</code> 権限・管理者同意が止められている場合はログインまたは書き込みできません。</li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="card mt">
+      <h2>1. CSV・入力項目</h2>
+      <div class="wide-grid">
+        <div>
+          <label for="csvFile">飛行履歴CSV（複数・追加読込対応）</label>
+          <input id="csvFile" type="file" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" />
+          <div class="hint">同じファイル名でも追加読込できます。重複フライトは <code>Vehicle Name + Flight ID + Takeoff Time + Land Time</code> 等で除外します。</div>
+          <div id="csvCacheStatus" class="small-note">CSVキャッシュ：未読込</div>
+          <div class="hint">必要な列：<code>Vehicle Name</code> <code>Flight ID</code> <code>Takeoff Time</code> <code>Takeoff Latitude</code> <code>Takeoff Longitude</code> <code>Land Time</code> <code>Land Latitude</code> <code>Land Longitude</code></div>
+          <div style="margin-top:12px">
+            <label for="encoding">文字コード</label>
+            <select id="encoding"><option value="UTF-8">UTF-8</option><option value="Shift_JIS">Shift_JIS</option></select>
+          </div>
+          <div style="margin-top:12px">
+            <label for="yearbookFile">飛行日誌2026年度.xlsx（任意）</label>
+            <input id="yearbookFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+            <div class="hint">選択すると、登録記号に一致する行のG列「総飛行時間」をP5に転記し、選択日の列へP5:P19の差分（最終累計−P5）だけを書き込んだ年度ブックも出力します。G列は年度管理ブック側の数式に任せます。</div>
+          </div>
+        </div>
+
+        <div class="input-grid">
+          <div>
+            <label for="targetDate">転記対象日</label>
+            <select id="targetDate" disabled><option value="">CSV読込後に選択</option></select>
+            <div class="hint">Takeoff Timeに+9時間した日付で抽出します。</div>
+          </div>
+          <div>
+            <label for="vehicleNameSelect">CSVのVehicle Name</label>
+            <select id="vehicleNameSelect" disabled><option value="">CSV読込後に自動表示</option></select>
+            <div class="hint">選択したVehicle Nameのフライトだけを転記し、登録記号を自動入力します。複数ある場合はここで選択してください。</div>
+          </div>
+          <div>
+            <label for="registrationId">無人航空機の登録記号</label>
+            <input id="registrationId" type="text" placeholder="例：JUxxxxxxxx" />
+            <select id="registrationCandidateSelect" class="hide" style="margin-top:8px"></select>
+            <div id="registrationMatchHint" class="hint">CSVのVehicle Nameを年度管理E列で完全一致検索し、該当行のC列を登録記号として取得します。</div>
+          </div>
+          <div>
+            <label for="pilotName">操縦者名</label>
+            <input id="pilotName" type="text" placeholder="例：山田 太郎" />
+          </div>
+          <div>
+            <label for="purposeText">飛行の目的</label>
+            <input id="purposeText" type="text" value="橋梁定期点検" />
+          </div>
+
+          <div class="span4">
+            <label>特定飛行の内容</label>
+            <div id="basicSpecificFlights" class="checkgrid"></div>
+            <button id="toggleSpecificBtn" type="button" class="ghost" style="margin-top:10px">その他の特定飛行を表示</button>
+            <div id="extraSpecificFlights" class="checkgrid hide"></div>
+            <div class="small-note">Excel出力時は短縮表記にします。例：特定：DID、目視外、30m未満</div>
+          </div>
+
+          <div class="span4 optional">
+            <div class="actions" style="margin-top:0">
+              <button id="addSafetyBtn" type="button" class="ghost">安全事項を追加</button>
+              <button id="addReportBtn" type="button" class="ghost">記事を追加</button>
+            </div>
+            <div id="safetyWrap" class="hide">
+              <div class="hint">安全事項は必要な場合だけ追加します。1ページ目は6〜19行目、2ページ目以降は5〜19行目から選択できます。</div>
+              <div id="safetyEntries"></div>
+            </div>
+            <div id="reportWrap" class="hide">
+              <div class="hint">記事は最大5件/ページまで。発生年月日は選択した飛行日と同じ日付を自動転記します。</div>
+              <div id="reportEntries"></div>
+            </div>
+
+
+          <div class="span4 optional">
+            <details id="inspectionDetails">
+              <summary>日常点検記録の入力項目を表示（通常は自動作成）</summary>
+              <div class="hint">飛行記録を作成すると、2枚目に日常点検記録シートを自動追加します。通常はこのままでOKです。</div>
+              <div class="input-grid mt">
+                <div><label for="inspectionJ6">機体全般</label><select id="inspectionJ6"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ7">プロペラ</label><select id="inspectionJ7"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ8">フレーム</label><select id="inspectionJ8"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ9">通信系統</label><select id="inspectionJ9"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ10">推進系統</label><select id="inspectionJ10"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ11">電源系統</label><select id="inspectionJ11"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ12">自動制御系統</label><select id="inspectionJ12"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ13">操縦系統</label><select id="inspectionJ13"><option selected>OK</option><option>NG</option></select></div>
+                <div><label for="inspectionJ14">バッテリー・燃料</label><select id="inspectionJ14"><option selected>OK</option><option>NG</option></select></div>
+                <div class="span4"><label for="inspectionNotes">特記事項</label><textarea id="inspectionNotes">特になし</textarea></div>
+                <div class="span2"><label for="inspectionPlaceOverride">実施場所</label><input id="inspectionPlaceOverride" type="text" placeholder="空欄なら1フライト目の離陸場所を自動入力" /></div>
+                <div><label for="inspectionDateOverride">実施年月日</label><input id="inspectionDateOverride" type="text" placeholder="空欄なら飛行年月日" /></div>
+                <div><label for="inspectionInspectorOverride">実施者</label><input id="inspectionInspectorOverride" type="text" placeholder="空欄なら操縦者名" /></div>
+              </div>
+            </details>
+          </div>
+
+          <div class="span4 optional">
+            <details id="maintenanceDetails">
+              <summary>整備点検記録の入力項目を表示（別ファイルで自動作成）</summary>
+              <div class="hint">整備点検記録は飛行日誌とは別ファイルで管理します。OneDrive保存がONの場合、機体フォルダ内の既存 <code>整備点検記録_登録記号_VehicleName.xlsx</code> を読み込み、必要な行だけ追記して同じファイルへ保存します。未作成の場合だけテンプレートから新規作成します。</div>
+              <label class="inline-check">
+                <input id="createMaintenanceRecord" type="checkbox" checked />
+                <span>整備点検記録を自動作成・保存する</span>
+              </label>
+              <label class="inline-check">
+                <input id="downloadMaintenanceRecord" type="checkbox" />
+                <span>整備点検記録もローカルにダウンロードする（通常はOFF。OneDrive既存ファイルを読み書き）</span>
+              </label>
+              <div class="input-grid mt">
+                <div>
+                  <label for="initialMaintenancePlacePreset">初回点検の実施場所</label>
+                  <select id="initialMaintenancePlacePreset">
+                    <option selected>事務所</option>
+                    <option>ホテル</option>
+                    <option>現地</option>
+                    <option value="custom">自由記述</option>
+                  </select>
+                </div>
+                <div class="span2">
+                  <label for="initialMaintenancePlaceCustom">初回点検の実施場所（自由記述）</label>
+                  <input id="initialMaintenancePlaceCustom" type="text" placeholder="自由記述を選んだ場合のみ使用" />
+                </div>
+                <div>
+                  <label for="maintenanceEngineerOverride">実施者</label>
+                  <input id="maintenanceEngineerOverride" type="text" placeholder="空欄なら操縦者名" />
+                </div>
+                <div class="span4">
+                  <label for="maintenanceRemarks">備考</label>
+                  <textarea id="maintenanceRemarks" placeholder="必要時のみ記載"></textarea>
+                </div>
+              </div>
+              <div class="small-note">初回点検は未記録の場合のみ作成します。20時間ごとの定期点検は、対象日の開始時点で20時間ラインを超えており、かつ未記録の場合に最新の1件だけ作成します。定期点検の実施場所は「現地」です。</div>
+            </details>
+          </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="readBtn" type="button">CSVを追加読み込み</button>
+        <button id="clearCsvBtn" type="button" class="ghost">CSVキャッシュをクリア</button>
+        <button id="downloadBtn" class="secondary" type="button" disabled>Excelを作成してダウンロード</button>
+      </div>
+      <div id="status" class="status">CSVを選択して「CSVを追加読み込み」を押してください。</div>
+
+      <details>
+        <summary>転記ルールを表示</summary>
+        <ul>
+          <li><span class="pill">登録記号</span> → 飛行日誌 G2</li>
+          <li><span class="pill">年度ブック G列</span> → 小数の時間数として読み取り、飛行日誌 P5 にはExcel時間値（時間÷24）で転記。年度ブックへの書込はP5:P19の差分のみ。G列は上書きしない</li>
+          <li><span class="pill">O列/P列</span> → 文字列ではなくExcel時間値で転記。表示はテンプレートの [h]:mm を利用</li>
+          <li><span class="pill">Takeoff Time +9時間</span> → 飛行年月日・離陸時刻</li>
+          <li><span class="pill">Land Time +9時間</span> → 着陸時刻</li>
+          <li><span class="pill">緯度経度</span> → 逆ジオコーディングで短縮住所へ変換。0.000000は不明</li>
+          <li><span class="pill">CSV</span> → 複数回追加読込可。同じファイル名でも再選択可。重複フライトは除外</li>
+          <li><span class="pill">1ページ目</span> → 6〜19行目、2ページ目以降 → 5〜19行目</li>
+          <li><span class="pill">安全事項</span> → ページ単位で入力行を選択。1ページ目は6〜19行目、2ページ目以降は5〜19行目</li>
+          <li><span class="pill">R2</span> → （NR.　ページ番号　）</li>
+          <li><span class="pill">記事</span> → C/E/I/K/R の21〜25行目</li>
+          <li><span class="pill">日常点検記録</span> → 2枚目に自動作成。登録記号・点検結果・実施場所/年月日/実施者を転記</li>
+          <li><span class="pill">整備点検記録</span> → 別ファイルで自動作成。機体フォルダ内に <code>整備点検記録_登録記号_VehicleName.xlsx</code> として保存</li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="card mt">
+      <h2>2. 読み込み結果プレビュー</h2>
+      <div id="preview" class="table-wrap"><table><tbody><tr><td>まだ読み込んでいません。</td></tr></tbody></table></div>
+    </section>
+  </div>
+
+  <script src="js/app.js"></script>
+
+</body>
+</html>
