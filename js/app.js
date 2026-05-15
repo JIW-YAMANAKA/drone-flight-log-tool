@@ -1134,12 +1134,62 @@ async function graphFetch(url, options = {}, redirectDepth = 0) {
   const token = await acquireGraphToken();
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${token}`);
+  const method = String(options.method || "GET").toUpperCase();
   const res = await fetch(url, { ...options, headers });
+
+  // GET /content は環境によって 308/400 になることがあるため、
+  // Graphメタ情報の @microsoft.graph.downloadUrl へ自動フォールバックする。
+  async function tryDownloadUrlFallback(reasonStatus) {
+    if (method !== "GET") return null;
+    const u = String(url || "");
+    if (!u.startsWith(GRAPH_ROOT) || !u.endsWith("/content")) return null;
+
+    const itemUrl = u.slice(0, -"/content".length);
+    const metaCandidates = [
+      `${itemUrl}?$select=id,name,file,@microsoft.graph.downloadUrl`,
+      `${itemUrl}?$select=id,name,file,%40microsoft.graph.downloadUrl`,
+      itemUrl
+    ];
+
+    const metaErrors = [];
+    for (const metaUrl of metaCandidates) {
+      try {
+        const metaHeaders = new Headers();
+        metaHeaders.set("Authorization", `Bearer ${token}`);
+        const metaRes = await fetch(metaUrl, { method: "GET", headers: metaHeaders });
+        if (!metaRes.ok) {
+          let metaBody = "";
+          try { metaBody = await metaRes.text(); } catch (_) {}
+          metaErrors.push(`${metaUrl} => ${metaRes.status} ${metaBody || metaRes.statusText}`);
+          continue;
+        }
+        const meta = await metaRes.json();
+        const downloadUrl = meta && meta["@microsoft.graph.downloadUrl"];
+        if (!downloadUrl) {
+          metaErrors.push(`${metaUrl} => downloadUrlなし`);
+          continue;
+        }
+        const dlRes = await fetch(downloadUrl);
+        if (dlRes.ok) return dlRes;
+        let dlBody = "";
+        try { dlBody = await dlRes.text(); } catch (_) {}
+        metaErrors.push(`downloadUrl => ${dlRes.status} ${dlBody || dlRes.statusText}`);
+      } catch (e) {
+        metaErrors.push(`${metaUrl} => ${e.message || e}`);
+      }
+    }
+
+    console.warn(`GET /content fallback failed after Graph ${reasonStatus}:`, metaErrors);
+    return null;
+  }
 
   // SharePoint / OneDrive 共有リンクでは、受信者側から見ると remoteItem になり、
   // 一部環境でGraphが 308 Redirect を返すことがある。
   // Location が取れる場合だけ最大3回まで手動追従する。
   if ([301, 302, 303, 307, 308].includes(res.status)) {
+    const fallback = await tryDownloadUrlFallback(res.status);
+    if (fallback) return fallback;
+
     const location = res.headers.get("Location") || res.headers.get("location");
     if (location && redirectDepth < 3) {
       const followHeaders = new Headers(options.headers || {});
@@ -1161,6 +1211,9 @@ async function graphFetch(url, options = {}, redirectDepth = 0) {
   }
 
   if (!res.ok) {
+    const fallback = await tryDownloadUrlFallback(res.status);
+    if (fallback) return fallback;
+
     let body = "";
     try { body = await res.text(); } catch (_) {}
     throw new Error(graphErrorDetail(url, res.status, body, res.statusText));
