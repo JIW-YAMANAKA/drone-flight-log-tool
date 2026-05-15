@@ -447,26 +447,37 @@ function setWorkbookCalcOnLoad(xmlText) {
   calcPr.setAttribute("calcMode", "auto"); calcPr.setAttribute("fullCalcOnLoad", "1"); calcPr.setAttribute("forceFullCalc", "1");
   return serializeXml(doc);
 }
-function updateWorkbookXml(xmlText, pageCount, includeDailyInspection = true) {
+function updateWorkbookXml(xmlText, pageCount, includeDailyInspection = true, includeMaintenanceInspection = false) {
   const doc = parseXml(xmlText);
   const sheets = doc.getElementsByTagNameNS(NS_MAIN, "sheets")[0];
   [...sheets.getElementsByTagNameNS(NS_MAIN, "sheet")].forEach((s, i) => { if (i > 0) s.remove(); });
   const first = sheets.getElementsByTagNameNS(NS_MAIN, "sheet")[0];
   first.setAttribute("name", "飛行記録"); first.setAttribute("sheetId", "17"); first.setAttributeNS(NS_REL, "r:id", "rId1");
 
+  let nextSheetId = 18;
+  let nextRelId = 5;
+
   if (includeDailyInspection) {
     const daily = doc.createElementNS(NS_MAIN, "sheet");
     daily.setAttribute("name", "日常点検記録");
-    daily.setAttribute("sheetId", "18");
-    daily.setAttributeNS(NS_REL, "r:id", "rId5");
+    daily.setAttribute("sheetId", String(nextSheetId++));
+    daily.setAttributeNS(NS_REL, "r:id", `rId${nextRelId++}`);
     sheets.appendChild(daily);
+  }
+
+  if (includeMaintenanceInspection) {
+    const maintenance = doc.createElementNS(NS_MAIN, "sheet");
+    maintenance.setAttribute("name", "整備点検記録");
+    maintenance.setAttribute("sheetId", String(nextSheetId++));
+    maintenance.setAttributeNS(NS_REL, "r:id", `rId${nextRelId++}`);
+    sheets.appendChild(maintenance);
   }
 
   for (let pageNo = 2; pageNo <= pageCount; pageNo++) {
     const sheet = doc.createElementNS(NS_MAIN, "sheet");
     sheet.setAttribute("name", `飛行記録_${pageNo}`);
-    sheet.setAttribute("sheetId", String(includeDailyInspection ? 18 + pageNo : 16 + pageNo));
-    sheet.setAttributeNS(NS_REL, "r:id", includeDailyInspection ? `rId${pageNo + 4}` : `rId${pageNo + 3}`);
+    sheet.setAttribute("sheetId", String(nextSheetId++));
+    sheet.setAttributeNS(NS_REL, "r:id", `rId${nextRelId++}`);
     sheets.appendChild(sheet);
   }
 
@@ -477,15 +488,20 @@ function updateWorkbookXml(xmlText, pageCount, includeDailyInspection = true) {
   const dn1 = doc.createElementNS(NS_MAIN, "definedName");
   dn1.setAttribute("name", "_xlnm.Print_Area"); dn1.setAttribute("localSheetId", "0"); dn1.textContent = "飛行記録!$A$1:$S$26"; definedNames.appendChild(dn1);
 
+  let localSheetId = 1;
   if (includeDailyInspection) {
     const dnDaily = doc.createElementNS(NS_MAIN, "definedName");
-    dnDaily.setAttribute("name", "_xlnm.Print_Area"); dnDaily.setAttribute("localSheetId", "1"); dnDaily.textContent = "'日常点検記録'!$A$1:$M$25"; definedNames.appendChild(dnDaily);
+    dnDaily.setAttribute("name", "_xlnm.Print_Area"); dnDaily.setAttribute("localSheetId", String(localSheetId++)); dnDaily.textContent = "'日常点検記録'!$A$1:$M$25"; definedNames.appendChild(dnDaily);
+  }
+  if (includeMaintenanceInspection) {
+    const dnMaintenance = doc.createElementNS(NS_MAIN, "definedName");
+    dnMaintenance.setAttribute("name", "_xlnm.Print_Area"); dnMaintenance.setAttribute("localSheetId", String(localSheetId++)); dnMaintenance.textContent = "'整備点検記録'!$A$1:$U$25"; definedNames.appendChild(dnMaintenance);
   }
 
   for (let pageNo = 2; pageNo <= pageCount; pageNo++) {
     const dn = doc.createElementNS(NS_MAIN, "definedName");
     dn.setAttribute("name", "_xlnm.Print_Area");
-    dn.setAttribute("localSheetId", String(includeDailyInspection ? pageNo : pageNo - 1));
+    dn.setAttribute("localSheetId", String(localSheetId++));
     dn.textContent = `'飛行記録_${pageNo}'!$A$1:$S$26`;
     definedNames.appendChild(dn);
   }
@@ -495,36 +511,47 @@ function updateWorkbookXml(xmlText, pageCount, includeDailyInspection = true) {
   calcPr.setAttribute("calcMode", "auto"); calcPr.setAttribute("fullCalcOnLoad", "1"); calcPr.setAttribute("forceFullCalc", "1");
   return serializeXml(doc);
 }
-function updateWorkbookRels(xmlText, pageCount, includeDailyInspection = true) {
+function updateWorkbookRels(xmlText, pageCount, includeDailyInspection = true, includeMaintenanceInspection = false) {
   const doc = parseXml(xmlText); const root = doc.documentElement;
   [...root.getElementsByTagNameNS(NS_PKG_REL, "Relationship")].forEach(rel => { if (rel.getAttribute("Type")?.endsWith("/worksheet") && rel.getAttribute("Id") !== "rId1") rel.remove(); });
+  let nextRelId = 5;
+  let nextSheetIndex = 2;
   if (includeDailyInspection) {
     const dailyRel = doc.createElementNS(NS_PKG_REL, "Relationship");
-    dailyRel.setAttribute("Id", "rId5");
+    dailyRel.setAttribute("Id", `rId${nextRelId++}`);
     dailyRel.setAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet");
-    dailyRel.setAttribute("Target", "worksheets/sheet2.xml");
+    dailyRel.setAttribute("Target", `worksheets/sheet${nextSheetIndex++}.xml`);
     root.appendChild(dailyRel);
+  }
+  if (includeMaintenanceInspection) {
+    const maintenanceRel = doc.createElementNS(NS_PKG_REL, "Relationship");
+    maintenanceRel.setAttribute("Id", `rId${nextRelId++}`);
+    maintenanceRel.setAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet");
+    maintenanceRel.setAttribute("Target", `worksheets/sheet${nextSheetIndex++}.xml`);
+    root.appendChild(maintenanceRel);
   }
   for (let pageNo = 2; pageNo <= pageCount; pageNo++) {
     const rel = doc.createElementNS(NS_PKG_REL, "Relationship");
-    rel.setAttribute("Id", includeDailyInspection ? `rId${pageNo + 4}` : `rId${pageNo + 3}`);
+    rel.setAttribute("Id", `rId${nextRelId++}`);
     rel.setAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet");
-    rel.setAttribute("Target", includeDailyInspection ? `worksheets/sheet${pageNo + 1}.xml` : `worksheets/sheet${pageNo}.xml`);
+    rel.setAttribute("Target", `worksheets/sheet${nextSheetIndex++}.xml`);
     root.appendChild(rel);
   }
   return serializeXml(doc);
 }
-function updateContentTypes(xmlText, pageCount, includeDailyInspection = true) {
+function updateContentTypes(xmlText, pageCount, includeDailyInspection = true, includeMaintenanceInspection = false) {
   const doc = parseXml(xmlText); const root = doc.documentElement;
   [...root.getElementsByTagNameNS(NS_CT, "Override")].forEach(o => { const p = o.getAttribute("PartName") || ""; if (/^\/xl\/worksheets\/sheet\d+\.xml$/.test(p) && p !== "/xl/worksheets/sheet1.xml") o.remove(); });
-  const maxSheetIndex = pageCount + (includeDailyInspection ? 1 : 0);
+  const extraSheets = (includeDailyInspection ? 1 : 0) + (includeMaintenanceInspection ? 1 : 0);
+  const maxSheetIndex = pageCount + extraSheets;
   for (let i = 2; i <= maxSheetIndex; i++) { const o = doc.createElementNS(NS_CT, "Override"); o.setAttribute("PartName", `/xl/worksheets/sheet${i}.xml`); o.setAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"); root.appendChild(o); }
   return serializeXml(doc);
 }
-function updateAppXml(xmlText, pageCount, includeDailyInspection = true) {
+function updateAppXml(xmlText, pageCount, includeDailyInspection = true, includeMaintenanceInspection = false) {
   const doc = parseXml(xmlText); const hp = doc.getElementsByTagNameNS(NS_APP, "HeadingPairs")[0]; const titles = doc.getElementsByTagNameNS(NS_APP, "TitlesOfParts")[0];
   const sheetNames = ["飛行記録"];
   if (includeDailyInspection) sheetNames.push("日常点検記録");
+  if (includeMaintenanceInspection) sheetNames.push("整備点検記録");
   for (let pageNo = 2; pageNo <= pageCount; pageNo++) sheetNames.push(`飛行記録_${pageNo}`);
   if (hp) { const i4 = hp.getElementsByTagNameNS(NS_VT, "i4")[0]; if (i4) i4.textContent = String(sheetNames.length); }
   if (titles) { const vec = titles.getElementsByTagNameNS(NS_VT, "vector")[0]; if (vec) { while (vec.firstChild) vec.removeChild(vec.firstChild); vec.setAttribute("size", String(sheetNames.length + 1)); sheetNames.forEach(name => { const lp = doc.createElementNS(NS_VT, "vt:lpstr"); lp.textContent = name; vec.appendChild(lp); }); const pa = doc.createElementNS(NS_VT, "vt:lpstr"); pa.textContent = "飛行記録!Print_Area"; vec.appendChild(pa); } }
@@ -668,6 +695,27 @@ async function buildDailyInspectionSheet(zip, sheetIndex, selectedRows, selected
   zip.file(`xl/worksheets/sheet${sheetIndex}.xml`, serializeXml(dailyDoc));
   const relsFile = dailyZip.file("xl/worksheets/_rels/sheet1.xml.rels");
   if (relsFile) zip.file(`xl/worksheets/_rels/sheet${sheetIndex}.xml.rels`, await relsFile.async("string"));
+}
+
+async function buildMaintenanceInspectionSheet(zip, sheetIndex, maintenanceBlob) {
+  if (!maintenanceBlob) return false;
+  const maintenanceZip = await JSZip.loadAsync(await maintenanceBlob.arrayBuffer());
+  const info = await getWorkbookSheetInfo(maintenanceZip);
+  const sheetXml = await maintenanceZip.file(info.path).async("string");
+  const maintenanceDoc = parseXml(sheetXml);
+  const ssFile = maintenanceZip.file("xl/sharedStrings.xml");
+  const sharedStrings = ssFile ? parseSharedStringsXml(await ssFile.async("string")) : [];
+  convertSharedStringsToInlineStrings(maintenanceDoc, sharedStrings);
+
+  const importedStyles = await maintenanceZip.file("xl/styles.xml").async("string");
+  const mergedStyles = mergeImportedSheetStyles(await zip.file("xl/styles.xml").async("string"), importedStyles, maintenanceDoc);
+  zip.file("xl/styles.xml", mergedStyles.xml);
+
+  zip.file(`xl/worksheets/sheet${sheetIndex}.xml`, serializeXml(maintenanceDoc));
+  const relPath = info.path.replace(/^xl\/worksheets\//, "xl/worksheets/_rels/") + ".rels";
+  const relsFile = maintenanceZip.file(relPath) || maintenanceZip.file("xl/worksheets/_rels/sheet1.xml.rels");
+  if (relsFile) zip.file(`xl/worksheets/_rels/sheet${sheetIndex}.xml.rels`, await relsFile.async("string"));
+  return true;
 }
 
 async function reverseGeocode(lat, lon) {
@@ -1035,6 +1083,25 @@ async function graphFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(url, { ...options, headers });
+
+  // SharePoint / OneDrive がまれに 308 Redirect を返す環境があるため、
+  // Location が見える場合は手動で追従する。
+  if ([301, 302, 303, 307, 308].includes(res.status)) {
+    const location = res.headers.get("Location");
+    if (location) {
+      const followHeaders = new Headers(options.headers || {});
+      // Graph以外の一時URLへ転送される場合、Authorizationを付けると失敗することがある。
+      if (String(location).startsWith(GRAPH_ROOT)) {
+        followHeaders.set("Authorization", `Bearer ${token}`);
+      }
+      const followRes = await fetch(location, { ...options, headers: followHeaders });
+      if (followRes.ok) return followRes;
+      let followBody = "";
+      try { followBody = await followRes.text(); } catch (_) {}
+      throw new Error(`Graph API ${followRes.status}: ${followBody || followRes.statusText}`);
+    }
+  }
+
   if (!res.ok) {
     let body = "";
     try { body = await res.text(); } catch (_) {}
@@ -1066,10 +1133,32 @@ async function getYearbookContentUrl() {
   if (shared) return `${GRAPH_ROOT}/drives/${shared.driveId}/items/${shared.itemId}/content`;
   return `${GRAPH_ROOT}/me/drive/root:/${encodeOneDrivePath(getOneDrivePath())}:/content`;
 }
+async function downloadDriveItemContentBlob(itemBaseUrl, label = "OneDriveファイル") {
+  // /content はGraph側でリダイレクトされることがあり、環境によっては308になる。
+  // まず driveItem の @microsoft.graph.downloadUrl を取得し、その一時URLから直接ダウンロードする。
+  try {
+    const meta = await graphFetchJson(`${itemBaseUrl}?$select=id,name,file,%40microsoft.graph.downloadUrl`, { method: "GET" });
+    const downloadUrl = meta && meta["@microsoft.graph.downloadUrl"];
+    if (downloadUrl) {
+      const res = await fetch(downloadUrl);
+      if (!res.ok) {
+        let body = "";
+        try { body = await res.text(); } catch (_) {}
+        throw new Error(`${label}のダウンロードに失敗しました: ${res.status} ${body || res.statusText}`);
+      }
+      return await res.blob();
+    }
+  } catch (e) {
+    console.warn(`${label}のdownloadUrl取得に失敗したため/contentへfallbackします:`, e);
+  }
+
+  const res = await graphFetch(`${itemBaseUrl}/content`, { method: "GET" });
+  return await res.blob();
+}
+
 async function downloadYearbookFromOneDrive() {
-  const contentUrl = await getYearbookContentUrl();
-  const res = await graphFetch(contentUrl, { method: "GET" });
-  const blob = await res.blob();
+  const baseUrl = await getYearbookItemBaseUrl();
+  const blob = await downloadDriveItemContentBlob(baseUrl, "年度管理ブック");
   return new Blob([blob], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 async function getYearbookItemBaseUrl() {
@@ -1288,9 +1377,8 @@ async function uploadWorkbookToOutputFolder(blob, filename, registrationId, vehi
 }
 async function downloadWorkbookFromOutputFolder(filename, registrationId, vehicleName) {
   const folder = await getOutputTargetFolder(registrationId, vehicleName);
-  const url = `${GRAPH_ROOT}/drives/${folder.driveId}/items/${folder.itemId}:/${encodeURIComponent(filename)}:/content`;
-  const res = await graphFetch(url, { method: "GET" });
-  return await res.blob();
+  const itemBaseUrl = `${GRAPH_ROOT}/drives/${folder.driveId}/items/${folder.itemId}:/${encodeURIComponent(filename)}:`;
+  return await downloadDriveItemContentBlob(itemBaseUrl, filename);
 }
 async function fetchMaintenanceTemplateBlob() {
   const res = await fetch("templates/整備点検記録.xlsx");
@@ -1431,31 +1519,39 @@ async function createMaintenanceRecordBlob(registrationId, vehicleName, selected
   const message = `整備点検記録：${action}（${entries.map(e => e.kind === "initial" ? "初回点検" : `${e.threshold}時間定期点検`).join("、")}）`;
   return { blob, filename, entries, baseSource: base.source, message };
 }
-async function tryCreateAndSaveMaintenanceRecord(registrationId, vehicleName, selectedDate, previousHours, pilotName) {
-  if (!shouldCreateMaintenanceRecord()) return { ok:false, message:"" };
+async function prepareMaintenanceRecordResult(registrationId, vehicleName, selectedDate, previousHours, pilotName) {
+  if (!shouldCreateMaintenanceRecord()) return { ok:false, blob:null, filename:"", message:"" };
   try {
     const result = await createMaintenanceRecordBlob(registrationId, vehicleName, selectedDate, previousHours, pilotName);
-    if (!result.blob) return { ok:true, message:` / ${result.message}` };
-    let localMsg = "";
-    if (shouldDownloadMaintenanceRecord()) {
-      downloadBlob(result.blob, result.filename);
-      localMsg = " / 整備点検記録ダウンロード済み";
-    }
-    let savedMsg = "";
-    if (shouldSaveDiaryToOneDrive()) {
-      try {
-        const savedPath = await uploadWorkbookToOutputFolder(result.blob, result.filename, registrationId, vehicleName);
-        savedMsg = ` / 整備点検記録OneDrive保存：${savedPath}`;
-      } catch (e) {
-        console.error(e);
-        savedMsg = ` / 整備点検記録OneDrive保存失敗：${e.message}`;
-      }
-    }
-    return { ok:true, message:` / ${result.message}${localMsg}${savedMsg}` };
+    return { ok:true, ...result };
   } catch (e) {
     console.error(e);
-    return { ok:false, message:` / 整備点検記録作成失敗：${e.message}` };
+    return { ok:false, blob:null, filename:"", entries:[], message:`整備点検記録作成失敗：${e.message}` };
   }
+}
+async function savePreparedMaintenanceRecord(result, registrationId, vehicleName) {
+  if (!result || !result.message) return { ok:false, message:"" };
+  if (!result.blob) return { ok: result.ok !== false, message:` / ${result.message}` };
+  let localMsg = "";
+  if (shouldDownloadMaintenanceRecord()) {
+    downloadBlob(result.blob, result.filename);
+    localMsg = " / 整備点検記録ダウンロード済み";
+  }
+  let savedMsg = "";
+  if (shouldSaveDiaryToOneDrive()) {
+    try {
+      const savedPath = await uploadWorkbookToOutputFolder(result.blob, result.filename, registrationId, vehicleName);
+      savedMsg = ` / 整備点検記録OneDrive保存：${savedPath}`;
+    } catch (e) {
+      console.error(e);
+      savedMsg = ` / 整備点検記録OneDrive保存失敗：${e.message}`;
+    }
+  }
+  return { ok:true, message:` / ${result.message}${localMsg}${savedMsg}` };
+}
+async function tryCreateAndSaveMaintenanceRecord(registrationId, vehicleName, selectedDate, previousHours, pilotName) {
+  const result = await prepareMaintenanceRecordResult(registrationId, vehicleName, selectedDate, previousHours, pilotName);
+  return savePreparedMaintenanceRecord(result, registrationId, vehicleName);
 }
 function findYearbookVehicleCandidates(doc, sharedStrings, vehicleName) {
   const target = String(vehicleName || "").trim();
@@ -1658,9 +1754,11 @@ function downloadBlob(blob, filename) {
   const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-async function createFlightDiaryBlob(selectedRows, selectedDate, previousHours) {
+async function createFlightDiaryBlob(selectedRows, selectedDate, previousHours, maintenanceRecordBlob = null) {
   const chunks = buildPageChunks(selectedRows);
   const pageCount = chunks.length || 1;
+  const includeMaintenanceInspection = Boolean(maintenanceRecordBlob);
+  const extraSheets = 1 + (includeMaintenanceInspection ? 1 : 0); // 日常点検記録 + 必要時のみ整備点検記録
   const zip = await JSZip.loadAsync(b64ToArrayBuffer(TEMPLATE_BASE64));
   const sheetTemplate = await zip.file("xl/worksheets/sheet1.xml").async("string");
   const sheetRelTemplate = await zip.file("xl/worksheets/_rels/sheet1.xml.rels").async("string");
@@ -1673,7 +1771,7 @@ async function createFlightDiaryBlob(selectedRows, selectedDate, previousHours) 
 
   for (let i = 0; i < pageCount; i++) {
     const pageNo = i + 1;
-    const sheetIndex = pageNo === 1 ? 1 : pageNo + 1; // sheet2は日常点検記録用
+    const sheetIndex = pageNo === 1 ? 1 : pageNo + extraSheets; // sheet2は日常点検記録、sheet3は必要時のみ整備点検記録
     const doc = parseXml(sheetTemplate);
     totalHours = fillFlightSheet(doc, chunks[i] || [], pageNo, options, totalHours);
     applySafety(doc, pageNo, safetyEntries);
@@ -1682,13 +1780,14 @@ async function createFlightDiaryBlob(selectedRows, selectedDate, previousHours) 
     if (sheetIndex > 1) zip.file(`xl/worksheets/_rels/sheet${sheetIndex}.xml.rels`, sheetRelTemplate);
   }
 
-  // 2枚目に日常点検記録を自動追加
+  // 2枚目に日常点検記録、必要時のみ3枚目に整備点検記録を自動追加
   await buildDailyInspectionSheet(zip, 2, selectedRows, selectedDate, options);
+  if (includeMaintenanceInspection) await buildMaintenanceInspectionSheet(zip, 3, maintenanceRecordBlob);
 
-  zip.file("xl/workbook.xml", updateWorkbookXml(await zip.file("xl/workbook.xml").async("string"), pageCount, true));
-  zip.file("xl/_rels/workbook.xml.rels", updateWorkbookRels(await zip.file("xl/_rels/workbook.xml.rels").async("string"), pageCount, true));
-  zip.file("[Content_Types].xml", updateContentTypes(await zip.file("[Content_Types].xml").async("string"), pageCount, true));
-  zip.file("docProps/app.xml", updateAppXml(await zip.file("docProps/app.xml").async("string"), pageCount, true));
+  zip.file("xl/workbook.xml", updateWorkbookXml(await zip.file("xl/workbook.xml").async("string"), pageCount, true, includeMaintenanceInspection));
+  zip.file("xl/_rels/workbook.xml.rels", updateWorkbookRels(await zip.file("xl/_rels/workbook.xml.rels").async("string"), pageCount, true, includeMaintenanceInspection));
+  zip.file("[Content_Types].xml", updateContentTypes(await zip.file("[Content_Types].xml").async("string"), pageCount, true, includeMaintenanceInspection));
+  zip.file("docProps/app.xml", updateAppXml(await zip.file("docProps/app.xml").async("string"), pageCount, true, includeMaintenanceInspection));
   const blob = await zip.generateAsync({ type:"blob", mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   outputStyleMap = null; outputRedBoldStyleMap = null;
   const yearbookDayHours = Math.round(Math.max(0, totalHours - startTotalHours) * 100) / 100;
@@ -1726,7 +1825,11 @@ async function downloadWorkbook() {
     const registrationIdForYearbook = $("registrationId").value.trim();
     if (!registrationIdForYearbook) throw new Error("年度管理E列から登録記号を取得できませんでした。登録記号を手入力してください。");
     const yearbookRead = await loadYearbook(yearbookSource, registrationIdForYearbook, selectedDate, null);
-    const diary = await createFlightDiaryBlob(selectedRows, selectedDate, yearbookRead.previousHours || 0);
+    const vehicleNameForFile = getSelectedVehicleName();
+    // 整備点検記録はOneDrive内の既存ファイルを優先して追記し、
+    // ダウンロード用の飛行日誌Excelには必要時だけシートとして同梱する。
+    const maintenancePrepared = await prepareMaintenanceRecordResult(registrationIdForYearbook, vehicleNameForFile, selectedDate, yearbookRead.previousHours || 0, $("pilotName").value.trim());
+    const diary = await createFlightDiaryBlob(selectedRows, selectedDate, yearbookRead.previousHours || 0, maintenancePrepared.blob);
 
     // 年度管理ブックへ書き込む値はP5:P19の差分。
     // 例：P5=7:06、P19=7:32 なら 26分 = 0.43時間。
@@ -1736,7 +1839,6 @@ async function downloadWorkbook() {
     const now = new Date();
     const stamp = `${now.getFullYear()}${pad2(now.getMonth()+1)}${pad2(now.getDate())}_${pad2(now.getHours())}${pad2(now.getMinutes())}`;
     const dateStamp = selectedDate.replaceAll("-", "");
-    const vehicleNameForFile = getSelectedVehicleName();
     const diaryName = buildDiaryOutputFileName(selectedDate, registrationIdForYearbook, vehicleNameForFile);
 
     if (usingOneDrive && yearbookResult.updatedBlob) {
@@ -1744,7 +1846,7 @@ async function downloadWorkbook() {
       await uploadYearbookToOneDrive(yearbookResult.updatedBlob, yearbookResult);
       downloadBlob(diary.blob, diaryName);
       const diarySave = await trySaveDiaryToOneDrive(diary.blob, diaryName, registrationIdForYearbook, vehicleNameForFile);
-      const maintenance = await tryCreateAndSaveMaintenanceRecord(registrationIdForYearbook, vehicleNameForFile, selectedDate, yearbookResult.previousHours || 0, $("pilotName").value.trim());
+      const maintenance = await savePreparedMaintenanceRecord(maintenancePrepared, registrationIdForYearbook, vehicleNameForFile);
       const combinedMsg = diarySave.message + maintenance.message;
       const statusKind = combinedMsg.includes("失敗") ? "warn" : "ok";
       setStatus(`飛行日誌を作成し、OneDrive年度管理も更新しました。P5開始値：${yearbookResult.previousHours}時間 / P5:P19差分：${Math.round(dayHours*100)/100}時間 / ${yearbookResult.message}${combinedMsg}`, statusKind);
@@ -1756,14 +1858,14 @@ async function downloadWorkbook() {
       const zipBlob = await outZip.generateAsync({ type:"blob", mimeType:"application/zip" });
       downloadBlob(zipBlob, `飛行日誌出力_${dateStamp}_${stamp}.zip`);
       const diarySave = await trySaveDiaryToOneDrive(diary.blob, diaryName, registrationIdForYearbook, vehicleNameForFile);
-      const maintenance = await tryCreateAndSaveMaintenanceRecord(registrationIdForYearbook, vehicleNameForFile, selectedDate, yearbookResult.previousHours || 0, $("pilotName").value.trim());
+      const maintenance = await savePreparedMaintenanceRecord(maintenancePrepared, registrationIdForYearbook, vehicleNameForFile);
       const combinedMsg = diarySave.message + maintenance.message;
       const statusKind = combinedMsg.includes("失敗") ? "warn" : "ok";
       setStatus(`ZIPを作成しました。P5開始値：${yearbookResult.previousHours}時間 / P5:P19差分：${Math.round(dayHours*100)/100}時間 / ${yearbookResult.message}${combinedMsg}`, statusKind);
     } else {
       downloadBlob(diary.blob, diaryName);
       const diarySave = await trySaveDiaryToOneDrive(diary.blob, diaryName, registrationIdForYearbook, vehicleNameForFile);
-      const maintenance = await tryCreateAndSaveMaintenanceRecord(registrationIdForYearbook, vehicleNameForFile, selectedDate, 0, $("pilotName").value.trim());
+      const maintenance = await savePreparedMaintenanceRecord(maintenancePrepared, registrationIdForYearbook, vehicleNameForFile);
       const combinedMsg = diarySave.message + maintenance.message;
       const statusKind = combinedMsg.includes("失敗") ? "warn" : "ok";
       setStatus(`Excelを作成しました：${diaryName}（${diary.pageCount}ページ / 年度管理ブックなし）${combinedMsg}`, statusKind);
