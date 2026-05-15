@@ -1078,34 +1078,45 @@ function encodeSharingUrlToToken(url) {
   return "u!" + btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 const sharedDriveItemCaches = new Map();
-async function graphFetch(url, options = {}) {
+function graphErrorDetail(url, status, body, statusText) {
+  const shortUrl = String(url || "").replace(/^https:\/\/graph\.microsoft\.com\/v1\.0\//, "graph:/");
+  const msg = body || statusText || "";
+  return `Graph API ${status}: ${msg} [${shortUrl}]`;
+}
+async function graphFetch(url, options = {}, redirectDepth = 0) {
   const token = await acquireGraphToken();
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(url, { ...options, headers });
 
-  // SharePoint / OneDrive がまれに 308 Redirect を返す環境があるため、
-  // Location が見える場合は手動で追従する。
+  // SharePoint / OneDrive 共有リンクでは、受信者側から見ると remoteItem になり、
+  // 一部環境でGraphが 308 Redirect を返すことがある。
+  // Location が取れる場合だけ最大3回まで手動追従する。
   if ([301, 302, 303, 307, 308].includes(res.status)) {
-    const location = res.headers.get("Location");
-    if (location) {
+    const location = res.headers.get("Location") || res.headers.get("location");
+    if (location && redirectDepth < 3) {
       const followHeaders = new Headers(options.headers || {});
-      // Graph以外の一時URLへ転送される場合、Authorizationを付けると失敗することがある。
       if (String(location).startsWith(GRAPH_ROOT)) {
         followHeaders.set("Authorization", `Bearer ${token}`);
       }
-      const followRes = await fetch(location, { ...options, headers: followHeaders });
+      const followOptions = { ...options, headers: followHeaders };
+      // 303はGETへ変えるのがHTTP仕様。308/307はメソッド維持。
+      if (res.status === 303) {
+        followOptions.method = "GET";
+        delete followOptions.body;
+      }
+      const followRes = await fetch(location, followOptions);
       if (followRes.ok) return followRes;
       let followBody = "";
       try { followBody = await followRes.text(); } catch (_) {}
-      throw new Error(`Graph API ${followRes.status}: ${followBody || followRes.statusText}`);
+      throw new Error(graphErrorDetail(location, followRes.status, followBody, followRes.statusText));
     }
   }
 
   if (!res.ok) {
     let body = "";
     try { body = await res.text(); } catch (_) {}
-    throw new Error(`Graph API ${res.status}: ${body || res.statusText}`);
+    throw new Error(graphErrorDetail(url, res.status, body, res.statusText));
   }
   return res;
 }
@@ -1115,13 +1126,23 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
   const cached = sharedDriveItemCaches.get(sourceUrl);
   if (cached?.driveId && cached?.itemId) return cached;
   const shareToken = encodeSharingUrlToToken(sourceUrl);
-  const apiUrl = `${GRAPH_ROOT}/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file`;
+  const apiUrl = `${GRAPH_ROOT}/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`;
   const res = await graphFetch(apiUrl, { method: "GET" });
   const item = await res.json();
-  const driveId = item?.parentReference?.driveId;
-  const itemId = item?.id;
+
+  // 重要：共有リンクを「他のユーザー」が開くと、GraphのdriveItemは remoteItem として返ることがある。
+  // その場合は item.id ではなく remoteItem.id / remoteItem.parentReference.driveId を使わないと、
+  // 後続の /content や /workbook が 308 Redirect になる環境がある。
+  const remote = item?.remoteItem || null;
+  const driveId = remote?.parentReference?.driveId || item?.parentReference?.driveId;
+  const itemId = remote?.id || item?.id;
+  const name = remote?.name || item?.name || "";
+  const webUrl = remote?.webUrl || item?.webUrl || "";
+  const isFolder = Boolean(remote?.folder || item?.folder);
+  const isFile = Boolean(remote?.file || item?.file);
+
   if (!driveId || !itemId) throw new Error(`${label}から driveId / itemId を取得できませんでした。リンクの権限を確認してください。`);
-  const resolved = { sourceUrl, driveId, itemId, name:item.name || "", isFolder:Boolean(item.folder), isFile:Boolean(item.file), webUrl:item.webUrl || "" };
+  const resolved = { sourceUrl, driveId, itemId, name, isFolder, isFile, webUrl, usedRemoteItem: Boolean(remote) };
   sharedDriveItemCaches.set(sourceUrl, resolved);
   return resolved;
 }
