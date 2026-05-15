@@ -1071,6 +1071,34 @@ async function acquireGraphToken() {
 function encodeOneDrivePath(path) {
   return String(path || "").split("/").filter(Boolean).map(part => encodeURIComponent(part)).join("/");
 }
+function normalizeSharingUrlCandidate(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    // OneDrive/SharePoint の共有リンク末尾に付く ?e=xxxx などの一時クエリは、
+    // Graph /shares で 308 Redirect の原因になることがあるため解決時だけ除外する。
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch (_) {
+    return raw.split("#")[0].split("?")[0];
+  }
+}
+function buildSharingUrlCandidates(url) {
+  const raw = String(url || "").trim();
+  const clean = normalizeSharingUrlCandidate(raw);
+  const list = [];
+  if (clean) list.push(clean);
+  if (raw && raw !== clean) list.push(raw);
+  // 末尾スラッシュ違いも環境によって解決結果が変わるため候補化する。
+  const more = [];
+  for (const v of list) {
+    if (v.endsWith("/")) more.push(v.slice(0, -1));
+    else more.push(v + "/");
+  }
+  return Array.from(new Set([...list, ...more].filter(Boolean)));
+}
 function encodeSharingUrlToToken(url) {
   const bytes = new TextEncoder().encode(String(url || ""));
   let binary = "";
@@ -1121,30 +1149,69 @@ async function graphFetch(url, options = {}, redirectDepth = 0) {
   return res;
 }
 async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク") {
-  sourceUrl = String(sourceUrl || "").trim();
-  if (!sourceUrl) return null;
-  const cached = sharedDriveItemCaches.get(sourceUrl);
+  const originalUrl = String(sourceUrl || "").trim();
+  if (!originalUrl) return null;
+
+  const cached = sharedDriveItemCaches.get(originalUrl);
   if (cached?.driveId && cached?.itemId) return cached;
-  const shareToken = encodeSharingUrlToToken(sourceUrl);
-  const apiUrl = `${GRAPH_ROOT}/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`;
-  const res = await graphFetch(apiUrl, { method: "GET" });
-  const item = await res.json();
 
-  // 重要：共有リンクを「他のユーザー」が開くと、GraphのdriveItemは remoteItem として返ることがある。
-  // その場合は item.id ではなく remoteItem.id / remoteItem.parentReference.driveId を使わないと、
-  // 後続の /content や /workbook が 308 Redirect になる環境がある。
-  const remote = item?.remoteItem || null;
-  const driveId = remote?.parentReference?.driveId || item?.parentReference?.driveId;
-  const itemId = remote?.id || item?.id;
-  const name = remote?.name || item?.name || "";
-  const webUrl = remote?.webUrl || item?.webUrl || "";
-  const isFolder = Boolean(remote?.folder || item?.folder);
-  const isFile = Boolean(remote?.file || item?.file);
+  const candidates = buildSharingUrlCandidates(originalUrl);
+  let lastError = null;
 
-  if (!driveId || !itemId) throw new Error(`${label}から driveId / itemId を取得できませんでした。リンクの権限を確認してください。`);
-  const resolved = { sourceUrl, driveId, itemId, name, isFolder, isFile, webUrl, usedRemoteItem: Boolean(remote) };
-  sharedDriveItemCaches.set(sourceUrl, resolved);
-  return resolved;
+  for (const candidateUrl of candidates) {
+    try {
+      const candidateCache = sharedDriveItemCaches.get(candidateUrl);
+      if (candidateCache?.driveId && candidateCache?.itemId) {
+        sharedDriveItemCaches.set(originalUrl, candidateCache);
+        return candidateCache;
+      }
+
+      const shareToken = encodeSharingUrlToToken(candidateUrl);
+      const apiUrl = `${GRAPH_ROOT}/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`;
+      const res = await graphFetch(apiUrl, { method: "GET" });
+      const item = await res.json();
+
+      // 重要：共有リンクを「他のユーザー」が開くと、GraphのdriveItemは remoteItem として返ることがある。
+      // その場合は item.id ではなく remoteItem.id / remoteItem.parentReference.driveId を使わないと、
+      // 後続の /content や /workbook が 308 Redirect になる環境がある。
+      const remote = item?.remoteItem || null;
+      const driveId = remote?.parentReference?.driveId || item?.parentReference?.driveId;
+      const itemId = remote?.id || item?.id;
+      const name = remote?.name || item?.name || "";
+      const webUrl = remote?.webUrl || item?.webUrl || "";
+      const isFolder = Boolean(remote?.folder || item?.folder);
+      const isFile = Boolean(remote?.file || item?.file);
+
+      if (!driveId || !itemId) {
+        throw new Error(`${label}から driveId / itemId を取得できませんでした。リンクの権限を確認してください。`);
+      }
+
+      const resolved = {
+        sourceUrl: originalUrl,
+        resolvedShareUrl: candidateUrl,
+        driveId,
+        itemId,
+        name,
+        isFolder,
+        isFile,
+        webUrl,
+        usedRemoteItem: Boolean(remote)
+      };
+
+      sharedDriveItemCaches.set(originalUrl, resolved);
+      sharedDriveItemCaches.set(candidateUrl, resolved);
+      return resolved;
+    } catch (e) {
+      lastError = e;
+      // ?e=付き共有リンク等で /shares が308になる場合があるため、候補URLを続けて試す。
+      console.warn(`${label}の解決候補で失敗:`, candidateUrl, e);
+    }
+  }
+
+  throw new Error(
+    `${label}の解決に失敗しました。共有リンクを作り直すか、リンク末尾の ?e=... を除いたURLで試してください。` +
+    (lastError ? ` 詳細: ${lastError.message}` : "")
+  );
 }
 async function resolveSharedDriveItem() {
   return resolveSharedDriveItemFromUrl(getOneDriveShareUrl(), "年度管理ブックの共有リンク");
