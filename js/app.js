@@ -1253,26 +1253,35 @@ async function getYearbookContentUrl() {
   return `${GRAPH_ROOT}/me/drive/root:/${encodeOneDrivePath(getOneDrivePath())}:/content`;
 }
 async function downloadDriveItemContentBlob(itemBaseUrl, label = "OneDriveファイル") {
-  // /content はGraph側でリダイレクトされることがあり、環境によっては308になる。
-  // まず driveItem の @microsoft.graph.downloadUrl を取得し、その一時URLから直接ダウンロードする。
-  try {
-    const meta = await graphFetchJson(`${itemBaseUrl}?$select=id,name,file,%40microsoft.graph.downloadUrl`, { method: "GET" });
-    const downloadUrl = meta && meta["@microsoft.graph.downloadUrl"];
-    if (downloadUrl) {
-      const res = await fetch(downloadUrl);
-      if (!res.ok) {
-        let body = "";
-        try { body = await res.text(); } catch (_) {}
-        throw new Error(`${label}のダウンロードに失敗しました: ${res.status} ${body || res.statusText}`);
+  // GitHub Pages など外部公開URLから利用した場合、/content が 308/400 になる環境がある。
+  // そのため /content へfallbackせず、driveItemメタデータの @microsoft.graph.downloadUrl を使って取得する。
+  const candidates = [
+    `${itemBaseUrl}?$select=id,name,file,@microsoft.graph.downloadUrl`,
+    `${itemBaseUrl}?$select=id,name,file,%40microsoft.graph.downloadUrl`,
+    `${itemBaseUrl}`
+  ];
+  const errors = [];
+
+  for (const url of candidates) {
+    try {
+      const meta = await graphFetchJson(url, { method: "GET" });
+      const downloadUrl = meta && meta["@microsoft.graph.downloadUrl"];
+      if (downloadUrl) {
+        const res = await fetch(downloadUrl);
+        if (!res.ok) {
+          let body = "";
+          try { body = await res.text(); } catch (_) {}
+          throw new Error(`${label}のダウンロードに失敗しました: ${res.status} ${body || res.statusText}`);
+        }
+        return await res.blob();
       }
-      return await res.blob();
+      errors.push(`${url} => downloadUrlなし`);
+    } catch (e) {
+      errors.push(`${url} => ${e.message || e}`);
     }
-  } catch (e) {
-    console.warn(`${label}のdownloadUrl取得に失敗したため/contentへfallbackします:`, e);
   }
 
-  const res = await graphFetch(`${itemBaseUrl}/content`, { method: "GET" });
-  return await res.blob();
+  throw new Error(`${label}のdownloadUrlを取得できませんでした。/contentは使用しません。詳細: ${errors.join(" / ")}`);
 }
 
 async function downloadYearbookFromOneDrive() {
