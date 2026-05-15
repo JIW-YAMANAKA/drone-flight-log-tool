@@ -23,6 +23,8 @@ const OD_KEYS = {
   tenant: "flightLog.msTenant",
   path: "flightLog.oneDriveYearbookPath",
   shareUrl: "flightLog.oneDriveYearbookShareUrl",
+  driveId: "flightLog.oneDriveYearbookDriveId",
+  itemId: "flightLog.oneDriveYearbookItemId",
   use: "flightLog.useOneDriveYearbook",
   outputFolderPath: "flightLog.oneDriveOutputFolderPath",
   outputFolderShareUrl: "flightLog.oneDriveOutputFolderShareUrl",
@@ -883,6 +885,8 @@ function loadOneDriveUiSettings() {
   $("msClientId").value = localStorage.getItem(OD_KEYS.clientId) || "";
   $("msTenant").value = localStorage.getItem(OD_KEYS.tenant) || "";
   if ($("oneDriveYearbookShareUrl")) $("oneDriveYearbookShareUrl").value = localStorage.getItem(OD_KEYS.shareUrl) || "";
+  if ($("oneDriveYearbookDriveId")) $("oneDriveYearbookDriveId").value = localStorage.getItem(OD_KEYS.driveId) || "";
+  if ($("oneDriveYearbookItemId")) $("oneDriveYearbookItemId").value = localStorage.getItem(OD_KEYS.itemId) || "";
   $("oneDriveYearbookPath").value = localStorage.getItem(OD_KEYS.path) || DEFAULT_YEARBOOK_PATH;
   if ($("oneDriveOutputFolderShareUrl")) $("oneDriveOutputFolderShareUrl").value = localStorage.getItem(OD_KEYS.outputFolderShareUrl) || "";
   if ($("oneDriveOutputFolderPath")) $("oneDriveOutputFolderPath").value = localStorage.getItem(OD_KEYS.outputFolderPath) || DEFAULT_OUTPUT_FOLDER_PATH;
@@ -909,6 +913,8 @@ function saveOneDriveUiSettings() {
   localStorage.setItem(OD_KEYS.clientId, $("msClientId").value.trim());
   localStorage.setItem(OD_KEYS.tenant, $("msTenant").value.trim());
   if ($("oneDriveYearbookShareUrl")) localStorage.setItem(OD_KEYS.shareUrl, $("oneDriveYearbookShareUrl").value.trim());
+  if ($("oneDriveYearbookDriveId")) localStorage.setItem(OD_KEYS.driveId, $("oneDriveYearbookDriveId").value.trim());
+  if ($("oneDriveYearbookItemId")) localStorage.setItem(OD_KEYS.itemId, $("oneDriveYearbookItemId").value.trim());
   localStorage.setItem(OD_KEYS.path, $("oneDriveYearbookPath").value.trim() || DEFAULT_YEARBOOK_PATH);
   localStorage.setItem(OD_KEYS.use, $("useOneDriveYearbook").checked ? "1" : "0");
   if ($("oneDriveOutputFolderShareUrl")) localStorage.setItem(OD_KEYS.outputFolderShareUrl, $("oneDriveOutputFolderShareUrl").value.trim());
@@ -934,7 +940,20 @@ function getOneDrivePath() {
 function getOneDriveShareUrl() {
   return ($("oneDriveYearbookShareUrl")?.value || "").trim();
 }
+function getOneDriveYearbookDirectIds() {
+  const driveId = ($("oneDriveYearbookDriveId")?.value || "").trim();
+  const itemId = ($("oneDriveYearbookItemId")?.value || "").trim();
+  return driveId && itemId ? { driveId, itemId } : null;
+}
+function setOneDriveYearbookDirectIds(driveId, itemId) {
+  if ($("oneDriveYearbookDriveId")) $("oneDriveYearbookDriveId").value = driveId || "";
+  if ($("oneDriveYearbookItemId")) $("oneDriveYearbookItemId").value = itemId || "";
+  if (driveId) localStorage.setItem(OD_KEYS.driveId, driveId);
+  if (itemId) localStorage.setItem(OD_KEYS.itemId, itemId);
+}
 function getYearbookLocationLabel() {
+  const direct = getOneDriveYearbookDirectIds();
+  if (direct) return "Drive ID / Item ID指定の年度管理ブック";
   const shared = getOneDriveShareUrl();
   return shared ? "共有リンクの年度管理ブック" : getOneDrivePath();
 }
@@ -1168,7 +1187,7 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
 
       const shareToken = encodeSharingUrlToToken(candidateUrl);
       const apiUrl = `${GRAPH_ROOT}/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`;
-      const res = await graphFetch(apiUrl, { method: "GET" });
+      const res = await graphFetch(apiUrl, { method: "GET", headers: { "Prefer": "redeemSharingLinkIfNecessary" } });
       const item = await res.json();
 
       // 重要：共有リンクを「他のユーザー」が開くと、GraphのdriveItemは remoteItem として返ることがある。
@@ -1214,6 +1233,18 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
   );
 }
 async function resolveSharedDriveItem() {
+  const direct = getOneDriveYearbookDirectIds();
+  if (direct) {
+    return {
+      sourceUrl: "direct-id",
+      driveId: direct.driveId,
+      itemId: direct.itemId,
+      name: "年度管理ブック",
+      isFile: true,
+      isFolder: false,
+      directId: true
+    };
+  }
   return resolveSharedDriveItemFromUrl(getOneDriveShareUrl(), "年度管理ブックの共有リンク");
 }
 async function getYearbookContentUrl() {
@@ -1706,6 +1737,28 @@ async function syncRegistrationFromYearbookSource(yearbookSource, force = true) 
   return candidates;
 }
 
+async function fetchYearbookItemByPersonalPath() {
+  const url = `${GRAPH_ROOT}/me/drive/root:/${encodeOneDrivePath(getOneDrivePath())}:?$select=id,name,parentReference,webUrl,file`;
+  const item = await graphFetchJson(url, { method: "GET" });
+  const driveId = item?.parentReference?.driveId;
+  const itemId = item?.id;
+  if (!driveId || !itemId) throw new Error("個人用パスから年度管理ブックのDrive ID / Item IDを取得できませんでした。");
+  return { driveId, itemId, name: item.name || "" };
+}
+
+async function captureYearbookDirectIds() {
+  try {
+    setOneDriveStatus("年度管理ブックのDrive ID / Item IDを取得中...", "");
+    const item = await fetchYearbookItemByPersonalPath();
+    setOneDriveYearbookDirectIds(item.driveId, item.itemId);
+    saveOneDriveUiSettings();
+    setOneDriveStatus(`年度管理IDを取得しました：${item.name || "年度管理ブック"} / Drive ID=${item.driveId} / Item ID=${item.itemId}。以後は共有リンクよりこのIDを優先します。`, "ok");
+  } catch (e) {
+    console.error(e);
+    setOneDriveStatus("年度管理ID取得に失敗しました: " + e.message, "err");
+  }
+}
+
 async function testOneDriveYearbook() {
   const selectedDate = $("targetDate").value;
   if (!selectedDate) { setOneDriveStatus("先にCSVを読み込んで転記対象日を選択してください。", "warn"); return; }
@@ -2045,6 +2098,7 @@ if ($("saveOneDriveSettingsBtn")) $("saveOneDriveSettingsBtn").addEventListener(
 if ($("msLoginBtn")) $("msLoginBtn").addEventListener("click", loginMicrosoft);
 if ($("msLogoutBtn")) $("msLogoutBtn").addEventListener("click", logoutMicrosoft);
 if ($("oneDriveTestBtn")) $("oneDriveTestBtn").addEventListener("click", testOneDriveYearbook);
+if ($("yearbookIdBtn")) $("yearbookIdBtn").addEventListener("click", captureYearbookDirectIds);
 if ($("useOneDriveYearbook")) $("useOneDriveYearbook").addEventListener("change", saveOneDriveUiSettings);
 if ($("saveDiaryToOneDrive")) $("saveDiaryToOneDrive").addEventListener("change", saveOneDriveUiSettings);
 if ($("createMaintenanceRecord")) $("createMaintenanceRecord").addEventListener("change", saveOneDriveUiSettings);

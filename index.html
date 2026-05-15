@@ -58,6 +58,16 @@
           <input id="oneDriveYearbookShareUrl" class="mono" type="url" placeholder="OneDriveの共有リンクを貼り付け。空欄なら下の自分のOneDriveパスを使用" />
           <div class="hint">他の人も同じ年度管理ブックを更新する場合は、編集可能な共有リンクをここに入れます。利用者にもそのファイルの編集権限が必要です。</div>
         </div>
+        <div class="span2">
+          <label for="oneDriveYearbookDriveId">年度管理 Drive ID（308回避用・任意）</label>
+          <input id="oneDriveYearbookDriveId" class="mono" type="text" placeholder="共有リンクで308が出る場合に使用" autocomplete="off" />
+          <div class="hint">入力されている場合、共有リンクより優先してこのDrive ID / Item IDで年度管理ブックを参照します。</div>
+        </div>
+        <div class="span2">
+          <label for="oneDriveYearbookItemId">年度管理 Item ID（308回避用・任意）</label>
+          <input id="oneDriveYearbookItemId" class="mono" type="text" placeholder="年度管理ブックのItem ID" autocomplete="off" />
+          <div class="hint">所有者は共有リンクを空欄にして個人用パスで読込後、「年度管理ID取得」を押すと取得できます。</div>
+        </div>
         <div class="span4">
           <label for="oneDriveYearbookPath">年度管理ブックのOneDriveパス（個人用 fallback）</label>
           <input id="oneDriveYearbookPath" class="mono" type="text" value="01.ドローン飛行日誌/年度管理/2026_飛行時間.xlsx" />
@@ -87,11 +97,13 @@
         <button id="msLoginBtn" type="button">会社アカウントでログイン</button>
         <button id="msLogoutBtn" type="button" class="ghost">ログアウト</button>
         <button id="oneDriveTestBtn" type="button" class="secondary">年度管理読込テスト</button>
+        <button id="yearbookIdBtn" type="button" class="ghost">年度管理ID取得</button>
       </div>
       <div id="oneDriveStatus" class="status">OneDrive未接続です。Client IDを入れてログインしてください。複数人で使う場合は年度管理ブックの共有リンクを設定します。</div>
       <details>
         <summary>OneDrive連携の注意</summary>
         <ul>
+          <li>Drive ID / Item IDを入れた場合は、それを最優先で使います。共有リンクでGraph 308が出る場合の回避用です。</li>
           <li>共有リンクを入れた場合は、誰がログインしても同じ年度管理ブックを取得し、対象セルだけ更新します。</li>
           <li>共有リンクが空欄の場合は、従来どおりログインした本人のOneDriveパスを見に行きます。</li>
           <li>飛行日誌は従来どおりダウンロードし、チェックONなら指定したOneDriveフォルダにも保存します。</li>
