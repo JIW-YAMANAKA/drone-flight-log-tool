@@ -14,13 +14,18 @@ const NS_APP = "http://schemas.openxmlformats.org/officeDocument/2006/extended-p
 const NS_VT = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes";
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
-const DEFAULT_YEARBOOK_PATH = "01.ドローン飛行日誌/年度管理/2026_飛行時間.xlsx";
-const DEFAULT_OUTPUT_FOLDER_PATH = "01.ドローン飛行日誌/出力";
+const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
+const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
+const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
+const DEFAULT_YEARBOOK_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
+const DEFAULT_OUTPUT_FOLDER_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`;
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
 const OD_KEYS = {
   clientId: "flightLog.msClientId",
   tenant: "flightLog.msTenant",
+  rootFolderShareUrl: "flightLog.oneDriveRootFolderShareUrl",
+  rootFolderPath: "flightLog.oneDriveRootFolderPath",
   path: "flightLog.oneDriveYearbookPath",
   shareUrl: "flightLog.oneDriveYearbookShareUrl",
   driveId: "flightLog.oneDriveYearbookDriveId",
@@ -884,6 +889,8 @@ function loadOneDriveUiSettings() {
   if (!$("msClientId")) return;
   $("msClientId").value = localStorage.getItem(OD_KEYS.clientId) || "";
   $("msTenant").value = localStorage.getItem(OD_KEYS.tenant) || "";
+  if ($("oneDriveRootFolderShareUrl")) $("oneDriveRootFolderShareUrl").value = localStorage.getItem(OD_KEYS.rootFolderShareUrl) || "";
+  if ($("oneDriveRootFolderPath")) $("oneDriveRootFolderPath").value = localStorage.getItem(OD_KEYS.rootFolderPath) || DEFAULT_ROOT_FOLDER_PATH;
   if ($("oneDriveYearbookShareUrl")) $("oneDriveYearbookShareUrl").value = localStorage.getItem(OD_KEYS.shareUrl) || "";
   if ($("oneDriveYearbookDriveId")) $("oneDriveYearbookDriveId").value = localStorage.getItem(OD_KEYS.driveId) || "";
   if ($("oneDriveYearbookItemId")) $("oneDriveYearbookItemId").value = localStorage.getItem(OD_KEYS.itemId) || "";
@@ -912,6 +919,8 @@ function loadOneDriveUiSettings() {
 function saveOneDriveUiSettings() {
   localStorage.setItem(OD_KEYS.clientId, $("msClientId").value.trim());
   localStorage.setItem(OD_KEYS.tenant, $("msTenant").value.trim());
+  if ($("oneDriveRootFolderShareUrl")) localStorage.setItem(OD_KEYS.rootFolderShareUrl, $("oneDriveRootFolderShareUrl").value.trim());
+  if ($("oneDriveRootFolderPath")) localStorage.setItem(OD_KEYS.rootFolderPath, $("oneDriveRootFolderPath").value.trim() || DEFAULT_ROOT_FOLDER_PATH);
   if ($("oneDriveYearbookShareUrl")) localStorage.setItem(OD_KEYS.shareUrl, $("oneDriveYearbookShareUrl").value.trim());
   if ($("oneDriveYearbookDriveId")) localStorage.setItem(OD_KEYS.driveId, $("oneDriveYearbookDriveId").value.trim());
   if ($("oneDriveYearbookItemId")) localStorage.setItem(OD_KEYS.itemId, $("oneDriveYearbookItemId").value.trim());
@@ -934,6 +943,12 @@ function getOneDriveTenant() {
   const t = ($("msTenant")?.value || "").trim();
   return t || "organizations";
 }
+function getOneDriveRootFolderShareUrl() {
+  return ($("oneDriveRootFolderShareUrl")?.value || "").trim();
+}
+function getOneDriveRootFolderPath() {
+  return ($("oneDriveRootFolderPath")?.value || "").trim() || DEFAULT_ROOT_FOLDER_PATH;
+}
 function getOneDrivePath() {
   return ($("oneDriveYearbookPath")?.value || "").trim() || DEFAULT_YEARBOOK_PATH;
 }
@@ -952,6 +967,7 @@ function setOneDriveYearbookDirectIds(driveId, itemId) {
   if (itemId) localStorage.setItem(OD_KEYS.itemId, itemId);
 }
 function getYearbookLocationLabel() {
+  if (getOneDriveRootFolderShareUrl()) return `ルート共有フォルダ/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
   const direct = getOneDriveYearbookDirectIds();
   if (direct) return "Drive ID / Item ID指定の年度管理ブック";
   const shared = getOneDriveShareUrl();
@@ -1285,7 +1301,60 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
     (lastError ? ` 詳細: ${lastError.message}` : "")
   );
 }
+
+async function resolveRootFolderDriveItem() {
+  const rootShareUrl = getOneDriveRootFolderShareUrl();
+  if (rootShareUrl) {
+    const root = await resolveSharedDriveItemFromUrl(rootShareUrl, "ドローン飛行日誌ルートフォルダの共有リンク");
+    if (!root?.isFolder) throw new Error("ドローン飛行日誌ルートの共有リンクは、Excelファイルではなくフォルダの共有リンクを指定してください。");
+    return root;
+  }
+  const rootPath = getOneDriveRootFolderPath();
+  if (rootPath) {
+    try {
+      return await resolveMyDriveFolderByPath(rootPath);
+    } catch (e) {
+      console.warn("ルートフォルダの個人パス解決に失敗しました。従来設定へfallbackします:", e);
+    }
+  }
+  return null;
+}
+async function findChildItemByName(driveId, parentItemId, childName) {
+  const listUrl = `${GRAPH_ROOT}/drives/${driveId}/items/${parentItemId}/children?$select=id,name,folder,file,parentReference&$top=999`;
+  const data = await graphFetchJson(listUrl, { method: "GET" });
+  return (data.value || []).find(item => item.name === childName) || null;
+}
+async function resolveChildItemByRelativePath(driveId, parentItemId, relativePath, expectedKind = "any") {
+  const parts = String(relativePath || "").split(/[\\/]+/).map(s => s.trim()).filter(Boolean);
+  if (!parts.length) throw new Error("相対パスが空です。");
+  let current = { id: parentItemId };
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const child = await findChildItemByName(driveId, current.id, part);
+    if (!child) throw new Error(`ルート共有フォルダ内に「${relativePath}」が見つかりません。見つからなかった階層：${part}`);
+    const isLast = i === parts.length - 1;
+    if (!isLast && !child.folder) throw new Error(`「${part}」はフォルダではありません。パス：${relativePath}`);
+    current = child;
+  }
+  if (expectedKind === "file" && !current.file) throw new Error(`指定パスはExcelファイルではありません：${relativePath}`);
+  if (expectedKind === "folder" && !current.folder) throw new Error(`指定パスはフォルダではありません：${relativePath}`);
+  return current;
+}
+async function resolveYearbookItemByRootFolder() {
+  const root = await resolveRootFolderDriveItem();
+  if (!root) return null;
+  const item = await resolveChildItemByRelativePath(root.driveId, root.itemId, DEFAULT_YEARBOOK_RELATIVE_PATH, "file");
+  return { driveId: root.driveId, itemId: item.id, name: item.name || "2026_飛行時間.xlsx", isFile: true, isFolder: false, viaRootFolder: true };
+}
+async function resolveOutputBaseFolderByRootFolder() {
+  const root = await resolveRootFolderDriveItem();
+  if (!root) return null;
+  const output = await ensureChildFolder(root.driveId, root.itemId, DEFAULT_OUTPUT_RELATIVE_FOLDER);
+  return { driveId: root.driveId, itemId: output.id, name: output.name || DEFAULT_OUTPUT_RELATIVE_FOLDER, isFolder: true, label: `ルート共有フォルダ/${DEFAULT_OUTPUT_RELATIVE_FOLDER}` };
+}
 async function resolveSharedDriveItem() {
+  const rootItem = await resolveYearbookItemByRootFolder();
+  if (rootItem) return rootItem;
   const direct = getOneDriveYearbookDirectIds();
   if (direct) {
     return {
@@ -1464,25 +1533,23 @@ async function resolveMyDriveFolderByPath(folderPath) {
   if (!driveId || !folder.id) throw new Error(`保存先フォルダのdriveId / itemIdを取得できませんでした：${folderPath}`);
   return { driveId, itemId: folder.id, name: folder.name || "", isFolder: true };
 }
-async function uploadDiaryToOneDrive(blob, filename, registrationId, vehicleName) {
-  const subfolderName = buildDiaryOutputSubfolderName(registrationId, vehicleName);
-  const folderShareUrl = getDiaryOutputFolderShareUrl();
+async function getOutputBaseFolder() {
+  const rootOutput = await resolveOutputBaseFolderByRootFolder();
+  if (rootOutput) return rootOutput;
 
+  const folderShareUrl = getDiaryOutputFolderShareUrl();
   if (folderShareUrl) {
     const baseFolder = await resolveSharedDriveItemFromUrl(folderShareUrl, "飛行日誌保存先フォルダの共有リンク");
     if (!baseFolder.isFolder) throw new Error("飛行日誌保存先の共有リンクは、Excelファイルではなくフォルダの共有リンクを指定してください。");
-
-    const targetFolder = await ensureChildFolder(baseFolder.driveId, baseFolder.itemId, subfolderName);
-    const uploadUrl = `${GRAPH_ROOT}/drives/${baseFolder.driveId}/items/${targetFolder.id}:/${encodeURIComponent(filename)}:/content`;
-    await graphFetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-      body: blob
-    });
-    return `共有フォルダ/${subfolderName}/${filename}`;
+    return { driveId: baseFolder.driveId, itemId: baseFolder.itemId, label: "共有フォルダ" };
   }
 
   const baseFolder = await resolveMyDriveFolderByPath(getDiaryOutputFolderPath());
+  return { driveId: baseFolder.driveId, itemId: baseFolder.itemId, label: getDiaryOutputFolderPath() };
+}
+async function uploadDiaryToOneDrive(blob, filename, registrationId, vehicleName) {
+  const subfolderName = buildDiaryOutputSubfolderName(registrationId, vehicleName);
+  const baseFolder = await getOutputBaseFolder();
   const targetFolder = await ensureChildFolder(baseFolder.driveId, baseFolder.itemId, subfolderName);
   const uploadUrl = `${GRAPH_ROOT}/drives/${baseFolder.driveId}/items/${targetFolder.id}:/${encodeURIComponent(filename)}:/content`;
   await graphFetch(uploadUrl, {
@@ -1490,7 +1557,7 @@ async function uploadDiaryToOneDrive(blob, filename, registrationId, vehicleName
     headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
     body: blob
   });
-  return `${getDiaryOutputFolderPath()}/${subfolderName}/${filename}`;
+  return `${baseFolder.label}/${subfolderName}/${filename}`;
 }
 async function trySaveDiaryToOneDrive(blob, filename, registrationId, vehicleName) {
   if (!shouldSaveDiaryToOneDrive()) return { ok: false, message: "" };
@@ -1535,16 +1602,9 @@ function formatHoursJa(hours) {
 }
 async function getOutputTargetFolder(registrationId, vehicleName) {
   const subfolderName = buildDiaryOutputSubfolderName(registrationId, vehicleName);
-  const folderShareUrl = getDiaryOutputFolderShareUrl();
-  if (folderShareUrl) {
-    const baseFolder = await resolveSharedDriveItemFromUrl(folderShareUrl, "飛行日誌保存先フォルダの共有リンク");
-    if (!baseFolder.isFolder) throw new Error("飛行日誌保存先の共有リンクは、Excelファイルではなくフォルダの共有リンクを指定してください。");
-    const targetFolder = await ensureChildFolder(baseFolder.driveId, baseFolder.itemId, subfolderName);
-    return { driveId: baseFolder.driveId, itemId: targetFolder.id, label: `共有フォルダ/${subfolderName}` };
-  }
-  const baseFolder = await resolveMyDriveFolderByPath(getDiaryOutputFolderPath());
+  const baseFolder = await getOutputBaseFolder();
   const targetFolder = await ensureChildFolder(baseFolder.driveId, baseFolder.itemId, subfolderName);
-  return { driveId: baseFolder.driveId, itemId: targetFolder.id, label: `${getDiaryOutputFolderPath()}/${subfolderName}` };
+  return { driveId: baseFolder.driveId, itemId: targetFolder.id, label: `${baseFolder.label}/${subfolderName}` };
 }
 async function uploadWorkbookToOutputFolder(blob, filename, registrationId, vehicleName) {
   const folder = await getOutputTargetFolder(registrationId, vehicleName);
