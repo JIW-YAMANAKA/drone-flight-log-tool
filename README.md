@@ -123,3 +123,8 @@ http://localhost:5501/index.html
 - OneDrive共有リンクを他ユーザーが使う場合の remoteItem を考慮。
 - Graph API 308 の原因箇所を追いやすいよう、エラーにGraph URL概要を表示。
 
+
+
+## v17 UI整理
+
+OneDriveのルートフォルダ共有リンク、個人用fallbackパス、旧方式の年度管理/保存先入力欄は画面から削除しました。アプリ内の固定リンクを使って `年度管理/2026_飛行時間.xlsx` と `出力/` を処理します。

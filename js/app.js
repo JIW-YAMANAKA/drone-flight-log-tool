@@ -19,6 +19,7 @@ const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
 const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
 const DEFAULT_YEARBOOK_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
 const DEFAULT_OUTPUT_FOLDER_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`;
+const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark-my.sharepoint.com/:f:/g/personal/ikko_yamanaka_jiw_co_jp/IgCpqHKYNvRDSqd1Ij2BSfSfAXmMxl-EcZhHx79oH8jr-mw?e=pscgiH";
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
 const OD_KEYS = {
@@ -886,96 +887,81 @@ function setOneDriveStatus(message, kind = "") {
   el.textContent = message;
 }
 function loadOneDriveUiSettings() {
-  if (!$("msClientId")) return;
-  $("msClientId").value = localStorage.getItem(OD_KEYS.clientId) || "";
-  $("msTenant").value = localStorage.getItem(OD_KEYS.tenant) || "";
-  if ($("oneDriveRootFolderShareUrl")) $("oneDriveRootFolderShareUrl").value = localStorage.getItem(OD_KEYS.rootFolderShareUrl) || "";
-  if ($("oneDriveRootFolderPath")) $("oneDriveRootFolderPath").value = localStorage.getItem(OD_KEYS.rootFolderPath) || DEFAULT_ROOT_FOLDER_PATH;
-  // 旧方式（年度管理ブック共有リンク / Drive ID / Item ID）はUIから削除済み。残っている保存値も使わない。
-  localStorage.removeItem(OD_KEYS.shareUrl);
-  localStorage.removeItem(OD_KEYS.driveId);
-  localStorage.removeItem(OD_KEYS.itemId);
-  if ($("oneDriveYearbookShareUrl")) $("oneDriveYearbookShareUrl").value = localStorage.getItem(OD_KEYS.shareUrl) || "";
-  if ($("oneDriveYearbookDriveId")) $("oneDriveYearbookDriveId").value = localStorage.getItem(OD_KEYS.driveId) || "";
-  if ($("oneDriveYearbookItemId")) $("oneDriveYearbookItemId").value = localStorage.getItem(OD_KEYS.itemId) || "";
-  $("oneDriveYearbookPath").value = localStorage.getItem(OD_KEYS.path) || DEFAULT_YEARBOOK_PATH;
-  if ($("oneDriveOutputFolderShareUrl")) $("oneDriveOutputFolderShareUrl").value = localStorage.getItem(OD_KEYS.outputFolderShareUrl) || "";
-  if ($("oneDriveOutputFolderPath")) $("oneDriveOutputFolderPath").value = localStorage.getItem(OD_KEYS.outputFolderPath) || DEFAULT_OUTPUT_FOLDER_PATH;
+  if (!$('msClientId')) return;
+  $('msClientId').value = localStorage.getItem(OD_KEYS.clientId) || '';
+  $('msTenant').value = localStorage.getItem(OD_KEYS.tenant) || '';
+
+  // 旧UI項目は廃止。過去に保存された値も使わない。
+  [
+    OD_KEYS.rootFolderShareUrl,
+    OD_KEYS.rootFolderPath,
+    OD_KEYS.path,
+    OD_KEYS.shareUrl,
+    OD_KEYS.driveId,
+    OD_KEYS.itemId,
+    OD_KEYS.outputFolderPath,
+    OD_KEYS.outputFolderShareUrl
+  ].forEach(k => localStorage.removeItem(k));
+
   const savedUse = localStorage.getItem(OD_KEYS.use);
-  $("useOneDriveYearbook").checked = savedUse == null ? true : savedUse === "1";
-  if ($("saveDiaryToOneDrive")) {
+  $('useOneDriveYearbook').checked = savedUse == null ? true : savedUse === '1';
+  if ($('saveDiaryToOneDrive')) {
     const savedSaveDiary = localStorage.getItem(OD_KEYS.saveDiary);
-    $("saveDiaryToOneDrive").checked = savedSaveDiary == null ? true : savedSaveDiary === "1";
+    $('saveDiaryToOneDrive').checked = savedSaveDiary == null ? true : savedSaveDiary === '1';
   }
-  if ($("createMaintenanceRecord")) {
+  if ($('createMaintenanceRecord')) {
     const saved = localStorage.getItem(OD_KEYS.saveMaintenance);
-    $("createMaintenanceRecord").checked = saved == null ? true : saved === "1";
+    $('createMaintenanceRecord').checked = saved == null ? true : saved === '1';
   }
-  if ($("initialMaintenancePlacePreset")) $("initialMaintenancePlacePreset").value = localStorage.getItem(OD_KEYS.initialMaintenancePlace) || "事務所";
-  if ($("initialMaintenancePlaceCustom")) $("initialMaintenancePlaceCustom").value = localStorage.getItem(OD_KEYS.initialMaintenancePlaceCustom) || "";
-  if ($("maintenanceEngineerOverride")) $("maintenanceEngineerOverride").value = localStorage.getItem(OD_KEYS.maintenanceEngineer) || "";
-  if ($("maintenanceRemarks")) $("maintenanceRemarks").value = localStorage.getItem(OD_KEYS.maintenanceRemarks) || "";
-  if ($("downloadMaintenanceRecord")) {
+  if ($('initialMaintenancePlacePreset')) $('initialMaintenancePlacePreset').value = localStorage.getItem(OD_KEYS.initialMaintenancePlace) || '事務所';
+  if ($('initialMaintenancePlaceCustom')) $('initialMaintenancePlaceCustom').value = localStorage.getItem(OD_KEYS.initialMaintenancePlaceCustom) || '';
+  if ($('maintenanceEngineerOverride')) $('maintenanceEngineerOverride').value = localStorage.getItem(OD_KEYS.maintenanceEngineer) || '';
+  if ($('maintenanceRemarks')) $('maintenanceRemarks').value = localStorage.getItem(OD_KEYS.maintenanceRemarks) || '';
+  if ($('downloadMaintenanceRecord')) {
     const saved = localStorage.getItem(OD_KEYS.downloadMaintenance);
-    $("downloadMaintenanceRecord").checked = saved == null ? false : saved === "1";
+    $('downloadMaintenanceRecord').checked = saved == null ? false : saved === '1';
   }
 }
 function saveOneDriveUiSettings() {
-  localStorage.setItem(OD_KEYS.clientId, $("msClientId").value.trim());
-  localStorage.setItem(OD_KEYS.tenant, $("msTenant").value.trim());
-  if ($("oneDriveRootFolderShareUrl")) localStorage.setItem(OD_KEYS.rootFolderShareUrl, $("oneDriveRootFolderShareUrl").value.trim());
-  if ($("oneDriveRootFolderPath")) localStorage.setItem(OD_KEYS.rootFolderPath, $("oneDriveRootFolderPath").value.trim() || DEFAULT_ROOT_FOLDER_PATH);
-  if ($("oneDriveYearbookShareUrl")) localStorage.setItem(OD_KEYS.shareUrl, $("oneDriveYearbookShareUrl").value.trim());
-  if ($("oneDriveYearbookDriveId")) localStorage.setItem(OD_KEYS.driveId, $("oneDriveYearbookDriveId").value.trim());
-  if ($("oneDriveYearbookItemId")) localStorage.setItem(OD_KEYS.itemId, $("oneDriveYearbookItemId").value.trim());
-  localStorage.setItem(OD_KEYS.path, $("oneDriveYearbookPath").value.trim() || DEFAULT_YEARBOOK_PATH);
-  localStorage.setItem(OD_KEYS.use, $("useOneDriveYearbook").checked ? "1" : "0");
-  if ($("oneDriveOutputFolderShareUrl")) localStorage.setItem(OD_KEYS.outputFolderShareUrl, $("oneDriveOutputFolderShareUrl").value.trim());
-  if ($("oneDriveOutputFolderPath")) localStorage.setItem(OD_KEYS.outputFolderPath, $("oneDriveOutputFolderPath").value.trim() || DEFAULT_OUTPUT_FOLDER_PATH);
-  if ($("saveDiaryToOneDrive")) localStorage.setItem(OD_KEYS.saveDiary, $("saveDiaryToOneDrive").checked ? "1" : "0");
-  if ($("createMaintenanceRecord")) localStorage.setItem(OD_KEYS.saveMaintenance, $("createMaintenanceRecord").checked ? "1" : "0");
-  if ($("initialMaintenancePlacePreset")) localStorage.setItem(OD_KEYS.initialMaintenancePlace, $("initialMaintenancePlacePreset").value);
-  if ($("initialMaintenancePlaceCustom")) localStorage.setItem(OD_KEYS.initialMaintenancePlaceCustom, $("initialMaintenancePlaceCustom").value.trim());
-  if ($("maintenanceEngineerOverride")) localStorage.setItem(OD_KEYS.maintenanceEngineer, $("maintenanceEngineerOverride").value.trim());
-  if ($("maintenanceRemarks")) localStorage.setItem(OD_KEYS.maintenanceRemarks, $("maintenanceRemarks").value.trim());
-  if ($("downloadMaintenanceRecord")) localStorage.setItem(OD_KEYS.downloadMaintenance, $("downloadMaintenanceRecord").checked ? "1" : "0");
-  const diarySaveText = $("saveDiaryToOneDrive")?.checked ? "飛行日誌のOneDrive保存も有効です。" : "飛行日誌のOneDrive保存は無効です。";
-  const maintenanceText = $("createMaintenanceRecord")?.checked ? "整備点検記録の自動作成も有効です。" : "整備点検記録の自動作成は無効です。";
-  const sourceText = getOneDriveRootFolderShareUrl()
-    ? "ルート共有フォルダを使います。"
-    : "自分のOneDriveパスを使います。";
-  setOneDriveStatus("OneDrive設定を保存しました。" + sourceText + " " + diarySaveText + " " + maintenanceText, "ok");
+  localStorage.setItem(OD_KEYS.clientId, $('msClientId').value.trim());
+  localStorage.setItem(OD_KEYS.tenant, $('msTenant').value.trim());
+  localStorage.setItem(OD_KEYS.use, $('useOneDriveYearbook').checked ? '1' : '0');
+  if ($('saveDiaryToOneDrive')) localStorage.setItem(OD_KEYS.saveDiary, $('saveDiaryToOneDrive').checked ? '1' : '0');
+  if ($('createMaintenanceRecord')) localStorage.setItem(OD_KEYS.saveMaintenance, $('createMaintenanceRecord').checked ? '1' : '0');
+  if ($('initialMaintenancePlacePreset')) localStorage.setItem(OD_KEYS.initialMaintenancePlace, $('initialMaintenancePlacePreset').value);
+  if ($('initialMaintenancePlaceCustom')) localStorage.setItem(OD_KEYS.initialMaintenancePlaceCustom, $('initialMaintenancePlaceCustom').value.trim());
+  if ($('maintenanceEngineerOverride')) localStorage.setItem(OD_KEYS.maintenanceEngineer, $('maintenanceEngineerOverride').value.trim());
+  if ($('maintenanceRemarks')) localStorage.setItem(OD_KEYS.maintenanceRemarks, $('maintenanceRemarks').value.trim());
+  if ($('downloadMaintenanceRecord')) localStorage.setItem(OD_KEYS.downloadMaintenance, $('downloadMaintenanceRecord').checked ? '1' : '0');
+
+  const diarySaveText = $('saveDiaryToOneDrive')?.checked ? '飛行日誌のOneDrive保存も有効です。' : '飛行日誌のOneDrive保存は無効です。';
+  const maintenanceText = $('createMaintenanceRecord')?.checked ? '整備点検記録の自動作成も有効です。' : '整備点検記録の自動作成は無効です。';
+  setOneDriveStatus('OneDrive設定を保存しました。固定のドローン飛行日誌ルート設定を使います。 ' + diarySaveText + ' ' + maintenanceText, 'ok');
 }
 function getOneDriveTenant() {
-  const t = ($("msTenant")?.value || "").trim();
-  return t || "organizations";
+  const t = ($('msTenant')?.value || '').trim();
+  return t || 'organizations';
 }
 function getOneDriveRootFolderShareUrl() {
-  return ($("oneDriveRootFolderShareUrl")?.value || "").trim();
+  return DEFAULT_ROOT_FOLDER_SHARE_URL;
 }
 function getOneDriveRootFolderPath() {
-  return ($("oneDriveRootFolderPath")?.value || "").trim() || DEFAULT_ROOT_FOLDER_PATH;
+  return DEFAULT_ROOT_FOLDER_PATH;
 }
 function getOneDrivePath() {
-  return ($("oneDriveYearbookPath")?.value || "").trim() || DEFAULT_YEARBOOK_PATH;
+  return DEFAULT_YEARBOOK_PATH;
 }
 function getOneDriveShareUrl() {
-  return ($("oneDriveYearbookShareUrl")?.value || "").trim();
+  return '';
 }
 function getOneDriveYearbookDirectIds() {
-  const driveId = ($("oneDriveYearbookDriveId")?.value || "").trim();
-  const itemId = ($("oneDriveYearbookItemId")?.value || "").trim();
-  return driveId && itemId ? { driveId, itemId } : null;
+  return null;
 }
-function setOneDriveYearbookDirectIds(driveId, itemId) {
-  if ($("oneDriveYearbookDriveId")) $("oneDriveYearbookDriveId").value = driveId || "";
-  if ($("oneDriveYearbookItemId")) $("oneDriveYearbookItemId").value = itemId || "";
-  if (driveId) localStorage.setItem(OD_KEYS.driveId, driveId);
-  if (itemId) localStorage.setItem(OD_KEYS.itemId, itemId);
+function setOneDriveYearbookDirectIds(_driveId, _itemId) {
+  // 旧方式は廃止
 }
 function getYearbookLocationLabel() {
-  if (getOneDriveRootFolderShareUrl()) return `ルート共有フォルダ/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
-  return getOneDrivePath();
+  return `固定ルート/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
 }
 
 const MSAL_SCRIPT_URLS = [
@@ -1269,6 +1255,7 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
       const remote = item?.remoteItem || null;
       const driveId = remote?.parentReference?.driveId || item?.parentReference?.driveId;
       const itemId = remote?.id || item?.id;
+      const parentItemId = remote?.parentReference?.id || item?.parentReference?.id || "";
       const name = remote?.name || item?.name || "";
       const webUrl = remote?.webUrl || item?.webUrl || "";
       const isFolder = Boolean(remote?.folder || item?.folder);
@@ -1283,6 +1270,7 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
         resolvedShareUrl: candidateUrl,
         driveId,
         itemId,
+        parentItemId,
         name,
         isFolder,
         isFile,
@@ -1306,22 +1294,52 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
   );
 }
 
-async function resolveRootFolderDriveItem() {
-  const rootShareUrl = getOneDriveRootFolderShareUrl();
-  if (rootShareUrl) {
-    const root = await resolveSharedDriveItemFromUrl(rootShareUrl, "ドローン飛行日誌ルートフォルダの共有リンク");
-    if (!root?.isFolder) throw new Error("ドローン飛行日誌ルートの共有リンクは、Excelファイルではなくフォルダの共有リンクを指定してください。");
-    return root;
-  }
-  const rootPath = getOneDriveRootFolderPath();
-  if (rootPath) {
-    try {
-      return await resolveMyDriveFolderByPath(rootPath);
-    } catch (e) {
-      console.warn("ルートフォルダの個人パス解決に失敗しました。従来設定へfallbackします:", e);
+async function getDriveItemMeta(driveId, itemId, select = 'id,name,parentReference,folder,file') {
+  return await graphFetchJson(`${GRAPH_ROOT}/drives/${driveId}/items/${itemId}?$select=${encodeURIComponent(select).replaceAll('%2C', ',')}`, { method: 'GET' });
+}
+async function inferRootFolderFromSharedYearbookFile(fileItem) {
+  if (!fileItem?.isFile) return null;
+  if (!fileItem.driveId || !fileItem.parentItemId) return null;
+
+  // Excelファイル共有リンクが渡された場合でも使えるようにする。
+  // 想定: 01.ドローン飛行日誌/年度管理/2026_飛行時間.xlsx
+  // file parent = 年度管理, parent parent = 01.ドローン飛行日誌
+  const parent = await getDriveItemMeta(fileItem.driveId, fileItem.parentItemId);
+  if (!parent?.folder) return null;
+
+  if (parent.name === '年度管理' && parent.parentReference?.id) {
+    const root = await getDriveItemMeta(fileItem.driveId, parent.parentReference.id);
+    if (root?.folder) {
+      return {
+        driveId: fileItem.driveId,
+        itemId: root.id,
+        name: root.name || DEFAULT_ROOT_FOLDER_PATH,
+        isFolder: true,
+        isFile: false,
+        inferredFromYearbookFile: true
+      };
     }
   }
-  return null;
+
+  // 万一、年度管理フォルダではなくルート直下のExcelリンクだった場合は親フォルダをルート扱いする。
+  return {
+    driveId: fileItem.driveId,
+    itemId: parent.id,
+    name: parent.name || DEFAULT_ROOT_FOLDER_PATH,
+    isFolder: true,
+    isFile: false,
+    inferredFromYearbookFile: true
+  };
+}
+async function resolveRootFolderDriveItem() {
+  const rootShareUrl = getOneDriveRootFolderShareUrl();
+  const item = await resolveSharedDriveItemFromUrl(rootShareUrl, 'ドローン飛行日誌固定リンク');
+  if (item?.isFolder) return item;
+
+  const inferred = await inferRootFolderFromSharedYearbookFile(item);
+  if (inferred?.isFolder) return inferred;
+
+  throw new Error('固定リンクからドローン飛行日誌ルートフォルダを特定できませんでした。フォルダ共有リンク、または「年度管理/2026_飛行時間.xlsx」の共有リンクを設定してください。');
 }
 async function findChildItemByName(driveId, parentItemId, childName) {
   const listUrl = `${GRAPH_ROOT}/drives/${driveId}/items/${parentItemId}/children?$select=id,name,folder,file,parentReference&$top=999`;
@@ -1528,16 +1546,7 @@ async function resolveMyDriveFolderByPath(folderPath) {
 async function getOutputBaseFolder() {
   const rootOutput = await resolveOutputBaseFolderByRootFolder();
   if (rootOutput) return rootOutput;
-
-  const folderShareUrl = getDiaryOutputFolderShareUrl();
-  if (folderShareUrl) {
-    const baseFolder = await resolveSharedDriveItemFromUrl(folderShareUrl, "飛行日誌保存先フォルダの共有リンク");
-    if (!baseFolder.isFolder) throw new Error("飛行日誌保存先の共有リンクは、Excelファイルではなくフォルダの共有リンクを指定してください。");
-    return { driveId: baseFolder.driveId, itemId: baseFolder.itemId, label: "共有フォルダ" };
-  }
-
-  const baseFolder = await resolveMyDriveFolderByPath(getDiaryOutputFolderPath());
-  return { driveId: baseFolder.driveId, itemId: baseFolder.itemId, label: getDiaryOutputFolderPath() };
+  throw new Error('OneDrive出力フォルダを解決できませんでした。');
 }
 async function uploadDiaryToOneDrive(blob, filename, registrationId, vehicleName) {
   const subfolderName = buildDiaryOutputSubfolderName(registrationId, vehicleName);
