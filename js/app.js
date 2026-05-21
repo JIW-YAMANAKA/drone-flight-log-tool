@@ -14,6 +14,9 @@ const NS_APP = "http://schemas.openxmlformats.org/officeDocument/2006/extended-p
 const NS_VT = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes";
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
+const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
+const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
+
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
 const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
@@ -887,12 +890,13 @@ function setOneDriveStatus(message, kind = "") {
   el.textContent = message;
 }
 function loadOneDriveUiSettings() {
-  if (!$('msClientId')) return;
-  $('msClientId').value = localStorage.getItem(OD_KEYS.clientId) || '';
-  $('msTenant').value = localStorage.getItem(OD_KEYS.tenant) || '';
+  if ($('msClientId')) $('msClientId').value = DEFAULT_MS_CLIENT_ID;
+  if ($('msTenant')) $('msTenant').value = DEFAULT_MS_TENANT_ID;
 
   // 旧UI項目は廃止。過去に保存された値も使わない。
   [
+    OD_KEYS.clientId,
+    OD_KEYS.tenant,
     OD_KEYS.rootFolderShareUrl,
     OD_KEYS.rootFolderPath,
     OD_KEYS.path,
@@ -900,11 +904,11 @@ function loadOneDriveUiSettings() {
     OD_KEYS.driveId,
     OD_KEYS.itemId,
     OD_KEYS.outputFolderPath,
-    OD_KEYS.outputFolderShareUrl
+    OD_KEYS.outputFolderShareUrl,
+    OD_KEYS.use
   ].forEach(k => localStorage.removeItem(k));
 
-  const savedUse = localStorage.getItem(OD_KEYS.use);
-  $('useOneDriveYearbook').checked = savedUse == null ? true : savedUse === '1';
+  if ($('useOneDriveYearbook')) $('useOneDriveYearbook').checked = true;
   if ($('saveDiaryToOneDrive')) {
     const savedSaveDiary = localStorage.getItem(OD_KEYS.saveDiary);
     $('saveDiaryToOneDrive').checked = savedSaveDiary == null ? true : savedSaveDiary === '1';
@@ -923,9 +927,6 @@ function loadOneDriveUiSettings() {
   }
 }
 function saveOneDriveUiSettings() {
-  localStorage.setItem(OD_KEYS.clientId, $('msClientId').value.trim());
-  localStorage.setItem(OD_KEYS.tenant, $('msTenant').value.trim());
-  localStorage.setItem(OD_KEYS.use, $('useOneDriveYearbook').checked ? '1' : '0');
   if ($('saveDiaryToOneDrive')) localStorage.setItem(OD_KEYS.saveDiary, $('saveDiaryToOneDrive').checked ? '1' : '0');
   if ($('createMaintenanceRecord')) localStorage.setItem(OD_KEYS.saveMaintenance, $('createMaintenanceRecord').checked ? '1' : '0');
   if ($('initialMaintenancePlacePreset')) localStorage.setItem(OD_KEYS.initialMaintenancePlace, $('initialMaintenancePlacePreset').value);
@@ -933,14 +934,9 @@ function saveOneDriveUiSettings() {
   if ($('maintenanceEngineerOverride')) localStorage.setItem(OD_KEYS.maintenanceEngineer, $('maintenanceEngineerOverride').value.trim());
   if ($('maintenanceRemarks')) localStorage.setItem(OD_KEYS.maintenanceRemarks, $('maintenanceRemarks').value.trim());
   if ($('downloadMaintenanceRecord')) localStorage.setItem(OD_KEYS.downloadMaintenance, $('downloadMaintenanceRecord').checked ? '1' : '0');
-
-  const diarySaveText = $('saveDiaryToOneDrive')?.checked ? '飛行日誌のOneDrive保存も有効です。' : '飛行日誌のOneDrive保存は無効です。';
-  const maintenanceText = $('createMaintenanceRecord')?.checked ? '整備点検記録の自動作成も有効です。' : '整備点検記録の自動作成は無効です。';
-  setOneDriveStatus('OneDrive設定を保存しました。固定のドローン飛行日誌ルート設定を使います。 ' + diarySaveText + ' ' + maintenanceText, 'ok');
 }
 function getOneDriveTenant() {
-  const t = ($('msTenant')?.value || '').trim();
-  return t || 'organizations';
+  return DEFAULT_MS_TENANT_ID;
 }
 function getOneDriveRootFolderShareUrl() {
   return DEFAULT_ROOT_FOLDER_SHARE_URL;
@@ -1026,12 +1022,12 @@ async function ensureMsalLoaded() {
 }
 
 function makeMsalConfigKey() {
-  return `${($("msClientId")?.value || "").trim()}|${getOneDriveTenant()}|${location.origin}${location.pathname}`;
+  return `${DEFAULT_MS_CLIENT_ID}|${getOneDriveTenant()}|${location.origin}${location.pathname}`;
 }
 async function ensureMsalApp() {
   await ensureMsalLoaded();
-  const clientId = ($("msClientId")?.value || "").trim();
-  if (!clientId) throw new Error("Microsoft Entra Client IDを入力してください。");
+  const clientId = DEFAULT_MS_CLIENT_ID;
+  if (!clientId) throw new Error("Microsoft認証のClient IDが設定されていません。");
   const key = makeMsalConfigKey();
   if (msalApp && msalConfigKey === key) return msalApp;
   msalConfigKey = key;
@@ -1057,7 +1053,7 @@ async function loginMicrosoft() {
     const result = await app.loginPopup({ scopes: GRAPH_SCOPES, prompt: "select_account" });
     msalAccount = result.account;
     app.setActiveAccount(msalAccount);
-    setOneDriveStatus(`ログインしました：${msalAccount?.username || "会社アカウント"}`, "ok");
+    setOneDriveStatus(`ログインしました：${msalAccount?.username || "Microsoftアカウント"}`, "ok");
   } catch (e) {
     console.error(e);
     setOneDriveStatus("Microsoftログインに失敗しました: " + e.message, "err");
@@ -1476,7 +1472,7 @@ async function uploadYearbookToOneDrive(blob, yearbookResult = null) {
   });
 }
 function shouldUseOneDriveYearbook() {
-  return Boolean($("useOneDriveYearbook")?.checked && ($("msClientId")?.value || "").trim());
+  return Boolean(DEFAULT_MS_CLIENT_ID);
 }
 function getDiaryOutputFolderShareUrl() {
   return ($("oneDriveOutputFolderShareUrl")?.value || "").trim();
@@ -1485,7 +1481,7 @@ function getDiaryOutputFolderPath() {
   return ($("oneDriveOutputFolderPath")?.value || "").trim() || DEFAULT_OUTPUT_FOLDER_PATH;
 }
 function shouldSaveDiaryToOneDrive() {
-  return Boolean($("saveDiaryToOneDrive")?.checked && ($("msClientId")?.value || "").trim());
+  return Boolean($("saveDiaryToOneDrive")?.checked && DEFAULT_MS_CLIENT_ID);
 }
 function sanitizeFileNamePart(value, fallback = "unknown") {
   let s = String(value || "").trim();
@@ -1883,19 +1879,35 @@ async function captureYearbookDirectIds() {
 }
 
 async function testOneDriveYearbook() {
-  const selectedDate = $("targetDate").value;
-  if (!selectedDate) { setOneDriveStatus("先にCSVを読み込んで転記対象日を選択してください。", "warn"); return; }
+  const selectedDate = $("targetDate")?.value || "";
   try {
-    setOneDriveStatus("OneDrive年度管理ブックを取得中...", "");
+    setOneDriveStatus("OneDrive接続を確認中...", "");
+
+    const root = await resolveRootFolderDriveItem();
+    const yearbookItem = await resolveYearbookItemByRootFolder();
+    const outputFolder = await resolveOutputBaseFolderByRootFolder();
     const blob = await downloadYearbookFromOneDrive();
+
+    const vehicleName = getSelectedVehicleName();
+    if (!selectedDate || !vehicleName) {
+      setOneDriveStatus(
+        `接続OK：ルートフォルダ「${root.name || "ドローン飛行日誌"}」、年度管理ブック「${yearbookItem.name || "2026_飛行時間.xlsx"}」、出力フォルダ「${outputFolder.name || "出力"}」を確認しました。CSV読込後は機体照合と書込予定セルまで確認できます。`,
+        "ok"
+      );
+      return;
+    }
+
     await syncRegistrationFromYearbookSource(blob, true);
     const registrationId = $("registrationId").value.trim();
-    if (!registrationId) { setOneDriveStatus("年度管理E列から登録記号を取得できませんでした。登録記号を手入力してください。", "warn"); return; }
+    if (!registrationId) {
+      setOneDriveStatus("接続OK。ただし年度管理E列から登録記号を取得できませんでした。登録記号を手入力してください。", "warn");
+      return;
+    }
     const info = await loadYearbook(blob, registrationId, selectedDate, null);
-    setOneDriveStatus(`${info.message} / 書込予定セル：${info.targetAddr}`, "ok");
+    setOneDriveStatus(`接続OK：${info.message} / 書込予定セル：${info.targetAddr}`, "ok");
   } catch (e) {
     console.error(e);
-    setOneDriveStatus("OneDrive年度管理の読込テストに失敗しました: " + e.message, "err");
+    setOneDriveStatus("接続テストに失敗しました: " + e.message, "err");
   }
 }
 

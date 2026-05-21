@@ -42,40 +42,28 @@
 
     <section class="card">
       <h2>0. OneDrive連携</h2>
-      <div class="input-grid">
-        <div class="span2">
-          <label for="msClientId">Microsoft Entra Client ID</label>
-          <input id="msClientId" type="text" placeholder="アプリケーション（クライアント）ID" autocomplete="off" />
-          <div class="hint">会社テナントで作成されたSPAアプリ登録のClient IDを入れます。</div>
-        </div>
-        <div class="span2">
-          <label for="msTenant">Tenant ID / ドメイン</label>
-          <input id="msTenant" type="text" placeholder="未入力なら organizations" autocomplete="off" />
-          <div class="hint">会社アカウント限定。Tenant ID または会社の onmicrosoft.com ドメインを指定できます。</div>
-        </div>
+      <input id="msClientId" type="hidden" value="0cac3fec-2429-4ac8-afdc-0a8072962de2" />
+      <input id="msTenant" type="hidden" value="de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb" />
+      <input id="useOneDriveYearbook" type="checkbox" checked class="hide" aria-hidden="true" />
+
+      <div class="actions" style="margin-top:0">
+        <button id="msLoginBtn" type="button">Microsoftアカウントでログイン</button>
+        <button id="msLogoutBtn" type="button" class="ghost">ログアウト</button>
+        <button id="oneDriveTestBtn" type="button" class="secondary">接続テスト</button>
       </div>
 
-      <label class="inline-check">
-        <input id="useOneDriveYearbook" type="checkbox" checked />
-        <span>OneDrive年度管理を使う（失敗時は下の手動選択ブックを使用）</span>
-      </label>
       <label class="inline-check">
         <input id="saveDiaryToOneDrive" type="checkbox" checked />
         <span>作成した飛行日誌をOneDriveにも保存する（ダウンロードも残す）</span>
       </label>
-      <div class="actions">
-        <button id="saveOneDriveSettingsBtn" type="button" class="ghost">OneDrive設定を保存</button>
-        <button id="msLoginBtn" type="button">会社アカウントでログイン</button>
-        <button id="msLogoutBtn" type="button" class="ghost">ログアウト</button>
-        <button id="oneDriveTestBtn" type="button" class="secondary">年度管理読込テスト</button>
-      </div>
-      <div id="oneDriveStatus" class="status">OneDrive未接続です。Client IDを入れてログインしてください。</div>
+
+      <div id="oneDriveStatus" class="status">OneDrive未接続です。Microsoftアカウントでログインしてください。</div>
       <details>
         <summary>OneDrive連携の注意</summary>
         <ul>
-          <li>年度管理と保存先は、アプリ内の固定設定を使います。</li>
-          <li><code>年度管理/2026_飛行時間.xlsx</code> を読み書きし、<code>出力</code> フォルダへ保存します。</li>
-          <li>飛行日誌は従来どおりダウンロードし、チェックONなら <code>出力/機体登録番号_Vehicle Name</code> にも保存します。</li>
+          <li>年度管理ブックと保存先フォルダは、アプリ内の固定設定を使います。</li>
+          <li><code>年度管理/2026_飛行時間.xlsx</code> を読み書きし、<code>出力/機体登録番号_Vehicle Name</code> に保存します。</li>
+          <li>接続テストはCSV読込前でも実行できます。CSV読込後は機体照合と書込予定セルまで確認します。</li>
           <li>Microsoftログインを使うため、HTMLは <code>https://</code> または <code>http://localhost</code> 上で開く必要があります。</li>
         </ul>
       </details>
