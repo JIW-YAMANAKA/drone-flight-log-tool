@@ -63,25 +63,13 @@
           <input id="oneDriveRootFolderPath" class="mono" type="text" value="01.ドローン飛行日誌" />
           <div class="hint">ルート共有リンクが空欄の場合だけ、ログイン本人のOneDrive内のこのフォルダを基準にします。</div>
         </div>
-        <div class="span4">
-          <label for="oneDriveYearbookShareUrl">年度管理ブックの共有リンク（旧方式・任意）</label>
-          <input id="oneDriveYearbookShareUrl" class="mono" type="url" placeholder="通常は空欄。ルート共有フォルダ方式を推奨" />
-          <div class="hint">ルート共有フォルダ方式が使えない場合だけ使用します。</div>
         </div>
-        <div class="span2">
-          <label for="oneDriveYearbookDriveId">年度管理 Drive ID（308回避用・任意）</label>
-          <input id="oneDriveYearbookDriveId" class="mono" type="text" placeholder="共有リンクで308が出る場合に使用" autocomplete="off" />
-          <div class="hint">入力されている場合、共有リンクより優先してこのDrive ID / Item IDで年度管理ブックを参照します。</div>
         </div>
-        <div class="span2">
-          <label for="oneDriveYearbookItemId">年度管理 Item ID（308回避用・任意）</label>
-          <input id="oneDriveYearbookItemId" class="mono" type="text" placeholder="年度管理ブックのItem ID" autocomplete="off" />
-          <div class="hint">所有者は共有リンクを空欄にして個人用パスで読込後、「年度管理ID取得」を押すと取得できます。</div>
         </div>
         <div class="span4">
           <label for="oneDriveYearbookPath">年度管理ブックのOneDriveパス（個人用 fallback）</label>
           <input id="oneDriveYearbookPath" class="mono" type="text" value="01.ドローン飛行日誌/年度管理/2026_飛行時間.xlsx" />
-          <div class="hint">ルート共有リンク・旧共有リンク・Drive IDが空欄の場合だけ、ログイン本人のOneDriveからこのパスを使います。</div>
+          <div class="hint">ルート共有リンクが空欄の場合だけ、ログイン本人のOneDriveからこのパスを使います。</div>
         </div>
         <div class="span4">
           <label for="oneDriveOutputFolderShareUrl">飛行日誌保存先フォルダの共有リンク（旧方式・任意）</label>
@@ -107,7 +95,6 @@
         <button id="msLoginBtn" type="button">会社アカウントでログイン</button>
         <button id="msLogoutBtn" type="button" class="ghost">ログアウト</button>
         <button id="oneDriveTestBtn" type="button" class="secondary">年度管理読込テスト</button>
-        <button id="yearbookIdBtn" type="button" class="ghost">年度管理ID取得</button>
       </div>
       <div id="oneDriveStatus" class="status">OneDrive未接続です。Client IDを入れてログインしてください。複数人で使う場合はルートフォルダ共有リンクを設定します。</div>
       <details>
@@ -115,7 +102,6 @@
         <ul>
           <li>複数人運用では「ドローン飛行日誌ルートフォルダ共有リンク」を使います。</li>
           <li>ルートフォルダ内の <code>年度管理/2026_飛行時間.xlsx</code> を読み書きし、<code>出力</code> フォルダへ保存します。</li>
-          <li>旧方式として年度管理ブック共有リンク、Drive ID / Item ID、本人OneDriveパスも残しています。</li>
           <li>飛行日誌は従来どおりダウンロードし、チェックONならルート共有フォルダ内の <code>出力/機体登録番号_Vehicle Name</code> にも保存します。</li>
           <li>この方式は年度管理ブックを取得して内容を確認し、書き込みはExcel APIで対象セルだけ更新します。</li>
           <li>Microsoftログインを使うため、HTMLは <code>https://</code> または <code>http://localhost</code> 上で開く必要があります。</li>

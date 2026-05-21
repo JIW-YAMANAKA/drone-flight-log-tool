@@ -891,6 +891,10 @@ function loadOneDriveUiSettings() {
   $("msTenant").value = localStorage.getItem(OD_KEYS.tenant) || "";
   if ($("oneDriveRootFolderShareUrl")) $("oneDriveRootFolderShareUrl").value = localStorage.getItem(OD_KEYS.rootFolderShareUrl) || "";
   if ($("oneDriveRootFolderPath")) $("oneDriveRootFolderPath").value = localStorage.getItem(OD_KEYS.rootFolderPath) || DEFAULT_ROOT_FOLDER_PATH;
+  // 旧方式（年度管理ブック共有リンク / Drive ID / Item ID）はUIから削除済み。残っている保存値も使わない。
+  localStorage.removeItem(OD_KEYS.shareUrl);
+  localStorage.removeItem(OD_KEYS.driveId);
+  localStorage.removeItem(OD_KEYS.itemId);
   if ($("oneDriveYearbookShareUrl")) $("oneDriveYearbookShareUrl").value = localStorage.getItem(OD_KEYS.shareUrl) || "";
   if ($("oneDriveYearbookDriveId")) $("oneDriveYearbookDriveId").value = localStorage.getItem(OD_KEYS.driveId) || "";
   if ($("oneDriveYearbookItemId")) $("oneDriveYearbookItemId").value = localStorage.getItem(OD_KEYS.itemId) || "";
@@ -937,7 +941,10 @@ function saveOneDriveUiSettings() {
   if ($("downloadMaintenanceRecord")) localStorage.setItem(OD_KEYS.downloadMaintenance, $("downloadMaintenanceRecord").checked ? "1" : "0");
   const diarySaveText = $("saveDiaryToOneDrive")?.checked ? "飛行日誌のOneDrive保存も有効です。" : "飛行日誌のOneDrive保存は無効です。";
   const maintenanceText = $("createMaintenanceRecord")?.checked ? "整備点検記録の自動作成も有効です。" : "整備点検記録の自動作成は無効です。";
-  setOneDriveStatus((getOneDriveShareUrl() ? "OneDrive設定を保存しました。共有リンクの年度管理ブックを使います。" : "OneDrive設定を保存しました。自分のOneDriveパスを使います。") + " " + diarySaveText + " " + maintenanceText, "ok");
+  const sourceText = getOneDriveRootFolderShareUrl()
+    ? "ルート共有フォルダを使います。"
+    : "自分のOneDriveパスを使います。";
+  setOneDriveStatus("OneDrive設定を保存しました。" + sourceText + " " + diarySaveText + " " + maintenanceText, "ok");
 }
 function getOneDriveTenant() {
   const t = ($("msTenant")?.value || "").trim();
@@ -968,10 +975,7 @@ function setOneDriveYearbookDirectIds(driveId, itemId) {
 }
 function getYearbookLocationLabel() {
   if (getOneDriveRootFolderShareUrl()) return `ルート共有フォルダ/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
-  const direct = getOneDriveYearbookDirectIds();
-  if (direct) return "Drive ID / Item ID指定の年度管理ブック";
-  const shared = getOneDriveShareUrl();
-  return shared ? "共有リンクの年度管理ブック" : getOneDrivePath();
+  return getOneDrivePath();
 }
 
 const MSAL_SCRIPT_URLS = [
@@ -1355,19 +1359,7 @@ async function resolveOutputBaseFolderByRootFolder() {
 async function resolveSharedDriveItem() {
   const rootItem = await resolveYearbookItemByRootFolder();
   if (rootItem) return rootItem;
-  const direct = getOneDriveYearbookDirectIds();
-  if (direct) {
-    return {
-      sourceUrl: "direct-id",
-      driveId: direct.driveId,
-      itemId: direct.itemId,
-      name: "年度管理ブック",
-      isFile: true,
-      isFolder: false,
-      directId: true
-    };
-  }
-  return resolveSharedDriveItemFromUrl(getOneDriveShareUrl(), "年度管理ブックの共有リンク");
+  return null;
 }
 async function getYearbookContentUrl() {
   const shared = await resolveSharedDriveItem();
@@ -2220,7 +2212,6 @@ if ($("saveOneDriveSettingsBtn")) $("saveOneDriveSettingsBtn").addEventListener(
 if ($("msLoginBtn")) $("msLoginBtn").addEventListener("click", loginMicrosoft);
 if ($("msLogoutBtn")) $("msLogoutBtn").addEventListener("click", logoutMicrosoft);
 if ($("oneDriveTestBtn")) $("oneDriveTestBtn").addEventListener("click", testOneDriveYearbook);
-if ($("yearbookIdBtn")) $("yearbookIdBtn").addEventListener("click", captureYearbookDirectIds);
 if ($("useOneDriveYearbook")) $("useOneDriveYearbook").addEventListener("change", saveOneDriveUiSettings);
 if ($("saveDiaryToOneDrive")) $("saveDiaryToOneDrive").addEventListener("change", saveOneDriveUiSettings);
 if ($("createMaintenanceRecord")) $("createMaintenanceRecord").addEventListener("change", saveOneDriveUiSettings);
