@@ -22,9 +22,9 @@ const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
 const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
 const DEFAULT_YEARBOOK_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
 const DEFAULT_OUTPUT_FOLDER_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`;
-const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark-my.sharepoint.com/:f:/g/personal/ikko_yamanaka_jiw_co_jp/IgD8RZtP_qhFRa0GIl6Ai8yHAVRtCngVy97vD3ijlVqQwRo";
+const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark.sharepoint.com/:f:/s/hiko-kiroku/IgBiiqwIBYDFRq9MY1u9cO2GAbJsLrEpIisD-3lG8SSzm2M";
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
-const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite.All"];
+const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
 const OD_KEYS = {
   clientId: "flightLog.msClientId",
   tenant: "flightLog.msTenant",
@@ -1115,7 +1115,7 @@ function buildSharingUrlCandidates(url) {
   const rawNoHash = stripTrailingSlash(raw.split("#")[0]);
   const rawNoQuery = stripTrailingSlash(rawNoHash.split("?")[0]);
 
-  // v22: Graph /shares には ?e=... 付きURLを渡さない。
+  // v23: SharePointサイト側フォルダを使う。Graph /shares には ?e=... 付きURLを渡さない。
   // 他ユーザー利用時に 403 になる切り分けをしやすくするため、
   // 正規化済みURL（クエリなし・末尾スラッシュなし）だけを候補にする。
   return Array.from(new Set([clean, rawNoQuery].filter(Boolean)));
