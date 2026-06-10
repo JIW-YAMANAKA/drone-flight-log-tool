@@ -23,6 +23,11 @@ const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
 const DEFAULT_YEARBOOK_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
 const DEFAULT_OUTPUT_FOLDER_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`;
 const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark.sharepoint.com/:f:/s/hiko-kiroku/IgBiiqwIBYDFRq9MY1u9cO2GAbJsLrEpIisD-3lG8SSzm2M";
+// v24: 共有リンク /shares 解決で403になる環境があるため、
+// SharePointサイトとドキュメントライブラリをGraphで直接たどる。
+const DEFAULT_SHAREPOINT_HOSTNAME = "japaninfrastructurewaymark.sharepoint.com";
+const DEFAULT_SHAREPOINT_SITE_PATH = "hiko-kiroku";
+const DEFAULT_SHAREPOINT_ROOT_FOLDER_CANDIDATES = [DEFAULT_ROOT_FOLDER_PATH, ""];
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
 const OD_KEYS = {
@@ -1350,13 +1355,130 @@ async function inferRootFolderFromSharedYearbookFile(fileItem) {
     inferredFromYearbookFile: true
   };
 }
-async function resolveRootFolderDriveItem() {
-  const rootShareUrl = getOneDriveRootFolderShareUrl();
-  const item = await resolveSharedDriveItemFromUrl(rootShareUrl, 'ドローン飛行日誌固定リンク');
-  if (item?.isFolder) return item;
+async function getDefaultSharePointSite() {
+  const host = encodeURIComponent(DEFAULT_SHAREPOINT_HOSTNAME);
+  const sitePath = String(DEFAULT_SHAREPOINT_SITE_PATH || "").replace(/^\/+|\/+$/g, "");
+  if (!host || !sitePath) throw new Error("SharePointサイト設定が空です。");
+  const siteUrl = `${GRAPH_ROOT}/sites/${host}:/sites/${encodeOneDrivePath(sitePath)}?$select=id,displayName,webUrl,name`;
+  return await graphFetchJson(siteUrl, { method: "GET" });
+}
+async function getDefaultSharePointDrive() {
+  const site = await getDefaultSharePointSite();
+  if (!site?.id) throw new Error("SharePointサイトIDを取得できませんでした。");
+  const driveUrl = `${GRAPH_ROOT}/sites/${encodeURIComponent(site.id)}/drive?$select=id,name,webUrl`;
+  const drive = await graphFetchJson(driveUrl, { method: "GET" });
+  if (!drive?.id) throw new Error("SharePointドキュメントライブラリのDrive IDを取得できませんでした。");
+  return { site, drive };
+}
+async function getDriveRootItem(driveId) {
+  return await graphFetchJson(`${GRAPH_ROOT}/drives/${driveId}/root?$select=id,name,parentReference,folder,file,webUrl`, { method: "GET" });
+}
+async function getDriveFolderByPath(driveId, folderPath) {
+  const encoded = encodeOneDrivePath(folderPath);
+  if (!encoded) return await getDriveRootItem(driveId);
+  const url = `${GRAPH_ROOT}/drives/${driveId}/root:/${encoded}:?$select=id,name,parentReference,folder,file,webUrl`;
+  return await graphFetchJson(url, { method: "GET" });
+}
+async function rootHasYearbookAndOutput(driveId, rootItemId) {
+  try {
+    const yearbook = await resolveChildItemByRelativePath(driveId, rootItemId, DEFAULT_YEARBOOK_RELATIVE_PATH, "file");
+    const output = await resolveChildItemByRelativePath(driveId, rootItemId, DEFAULT_OUTPUT_RELATIVE_FOLDER, "folder");
+    return Boolean(yearbook?.id && output?.id);
+  } catch (_) {
+    return false;
+  }
+}
+async function scanSharePointDriveForFlightLogRoot(driveId) {
+  const root = await getDriveRootItem(driveId);
+  if (root?.folder && await rootHasYearbookAndOutput(driveId, root.id)) return root;
 
-  const inferred = await inferRootFolderFromSharedYearbookFile(item);
-  if (inferred?.isFolder) return inferred;
+  const listUrl = `${GRAPH_ROOT}/drives/${driveId}/root/children?$select=id,name,folder,file,parentReference,webUrl&$top=999`;
+  const data = await graphFetchJson(listUrl, { method: "GET" });
+  for (const child of data.value || []) {
+    if (!child?.folder) continue;
+    if (child.name === DEFAULT_ROOT_FOLDER_PATH || /飛行日誌/.test(child.name || "")) {
+      if (await rootHasYearbookAndOutput(driveId, child.id)) return child;
+    }
+  }
+  for (const child of data.value || []) {
+    if (!child?.folder) continue;
+    if (await rootHasYearbookAndOutput(driveId, child.id)) return child;
+  }
+  return null;
+}
+async function resolveSharePointRootFolderDirect() {
+  const { site, drive } = await getDefaultSharePointDrive();
+  const errors = [];
+
+  for (const folderPath of DEFAULT_SHAREPOINT_ROOT_FOLDER_CANDIDATES) {
+    try {
+      const candidate = await getDriveFolderByPath(drive.id, folderPath);
+      if (!candidate?.folder) continue;
+      if (await rootHasYearbookAndOutput(drive.id, candidate.id)) {
+        return {
+          driveId: drive.id,
+          itemId: candidate.id,
+          parentItemId: candidate.parentReference?.id || "",
+          name: candidate.name || (folderPath || "ドキュメント"),
+          isFolder: true,
+          isFile: false,
+          webUrl: candidate.webUrl || "",
+          siteId: site.id,
+          viaSharePointDirect: true
+        };
+      }
+      errors.push(`${folderPath || "ドキュメントルート"}: 年度管理/出力が見つかりません`);
+    } catch (e) {
+      errors.push(`${folderPath || "ドキュメントルート"}: ${e.message || e}`);
+    }
+  }
+
+  try {
+    const scanned = await scanSharePointDriveForFlightLogRoot(drive.id);
+    if (scanned?.folder) {
+      return {
+        driveId: drive.id,
+        itemId: scanned.id,
+        parentItemId: scanned.parentReference?.id || "",
+        name: scanned.name || DEFAULT_ROOT_FOLDER_PATH,
+        isFolder: true,
+        isFile: false,
+        webUrl: scanned.webUrl || "",
+        siteId: site.id,
+        viaSharePointDirect: true,
+        scanned: true
+      };
+    }
+  } catch (e) {
+    errors.push(`ドキュメントライブラリ走査: ${e.message || e}`);
+  }
+
+  throw new Error(`SharePointサイト「${DEFAULT_SHAREPOINT_SITE_PATH}」のドキュメントライブラリ内に「${DEFAULT_YEARBOOK_RELATIVE_PATH}」と「${DEFAULT_OUTPUT_RELATIVE_FOLDER}」を持つルートフォルダを見つけられませんでした。詳細: ${errors.join(" / ")}`);
+}
+async function resolveRootFolderDriveItem() {
+  let directError = null;
+  try {
+    const direct = await resolveSharePointRootFolderDirect();
+    if (direct?.isFolder) return direct;
+  } catch (e) {
+    directError = e;
+    console.warn('SharePoint直接解決に失敗:', e);
+  }
+
+  const rootShareUrl = getOneDriveRootFolderShareUrl();
+  try {
+    const item = await resolveSharedDriveItemFromUrl(rootShareUrl, 'ドローン飛行日誌固定リンク');
+    if (item?.isFolder) return item;
+
+    const inferred = await inferRootFolderFromSharedYearbookFile(item);
+    if (inferred?.isFolder) return inferred;
+  } catch (shareError) {
+    throw new Error(
+      'SharePoint直接アクセスと共有リンク解決の両方に失敗しました。' +
+      (directError ? ` SharePoint直接: ${directError.message}` : '') +
+      ` / 共有リンク: ${shareError.message}`
+    );
+  }
 
   throw new Error('固定リンクからドローン飛行日誌ルートフォルダを特定できませんでした。フォルダ共有リンク、または「年度管理/2026_飛行時間.xlsx」の共有リンクを設定してください。');
 }
@@ -1914,7 +2036,7 @@ async function testOneDriveYearbook() {
     const vehicleName = getSelectedVehicleName();
     if (!selectedDate || !vehicleName) {
       setOneDriveStatus(
-        `接続OK：ルートフォルダ「${root.name || "ドローン飛行日誌"}」、年度管理ブック「${yearbookItem.name || "2026_飛行時間.xlsx"}」、出力フォルダ「${outputFolder.name || "出力"}」を確認しました。CSV読込後は機体照合と書込予定セルまで確認できます。`,
+        `接続OK：SharePoint/OneDriveのルートフォルダ「${root.name || "ドローン飛行日誌"}」、年度管理ブック「${yearbookItem.name || "2026_飛行時間.xlsx"}」、出力フォルダ「${outputFolder.name || "出力"}」を確認しました。CSV読込後は機体照合と書込予定セルまで確認できます。`,
         "ok"
       );
       return;

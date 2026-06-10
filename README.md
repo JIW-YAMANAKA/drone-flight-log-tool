@@ -164,3 +164,10 @@ Entra側でも Microsoft Graph の委任されたアクセス許可に `Files.Re
 - 固定ルートフォルダ共有リンクは `?e=...` を除いたSharePointフォルダURLを使用します。
 - 一般ユーザーは管理者承認なしでログインできる想定に戻しています。
 
+
+## v24 変更点
+
+- SharePointサイト `hiko-kiroku` では共有リンク `/shares/.../driveItem` 解決で403になる環境があるため、共有リンク解決を優先せず、SharePointサイトのドキュメントライブラリを直接参照する方式を追加しました。
+- `Files.ReadWrite` のまま、`/sites/japaninfrastructurewaymark.sharepoint.com:/sites/hiko-kiroku` → 既定ドキュメントライブラリ → `01.ドローン飛行日誌` → `年度管理/2026_飛行時間.xlsx` / `出力` の順で探します。
+- `01.ドローン飛行日誌` がドキュメントライブラリ直下にない場合も、直下フォルダを走査して `年度管理/2026_飛行時間.xlsx` と `出力` を持つフォルダをルートとして自動検出します。
+- SharePoint直接参照に失敗した場合のみ、従来の共有リンク方式へフォールバックします。
