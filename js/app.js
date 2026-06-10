@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v26-fixed-id-debug-20260610";
+const APP_BUILD_VERSION = "v27-fixed-id-required-20260610";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -1237,14 +1237,34 @@ async function getDriveItemMeta(driveId, itemId, select = 'id,name,parentReferen
 function hasFixedSharePointRootFolderIds() {
   return Boolean(String(SHAREPOINT_DRIVE_ID || "").trim() && String(SHAREPOINT_ROOT_FOLDER_ITEM_ID || "").trim());
 }
+function formatFixedIdSetupHint() {
+  return [
+    "次の対応:",
+    "- DevTools Consoleで debugGraphAccess() を実行する",
+    "- Consoleの固定ID候補から SHAREPOINT_DRIVE_ID / SHAREPOINT_ROOT_FOLDER_ITEM_ID を app.js 上部へ設定する",
+    "- 固定ID設定後は /sites と /shares を使わず /drives/{driveId}/items/{itemId} だけで接続テストします"
+  ].join("\n");
+}
 function formatSharePointAccessError(detail = "") {
   return [
-    `Microsoftログインは成功しましたが、SharePointサイト ${DEFAULT_SHAREPOINT_SITE_PATH} にアクセスできません。`,
+    `Microsoftログインは成功しましたが、固定IDが未設定のためSharePoint site path経由の解決で停止しました。`,
+    `SharePointサイト ${DEFAULT_SHAREPOINT_SITE_PATH} のドキュメントライブラリにアクセスできません。`,
     "可能性:",
     `- このユーザーが ${DEFAULT_SHAREPOINT_SITE_PATH} サイトまたは対象フォルダのメンバーではない`,
     "- アプリのスコープに必要な権限がない",
-    "- site path解決に Sites.Read.All が必要",
-    "- fixed driveId / itemId が未設定",
+    "- /sites/{siteId}/drive 解決に Sites.Read.All が必要なテナント設定になっている",
+    "- SHAREPOINT_DRIVE_ID / SHAREPOINT_ROOT_FOLDER_ITEM_ID が未設定",
+    formatFixedIdSetupHint(),
+    detail ? `詳細:\n${detail}` : ""
+  ].filter(Boolean).join("\n");
+}
+function formatFixedSharePointAccessError(detail = "") {
+  return [
+    "固定ID方式でSharePointフォルダにアクセスできません。",
+    "確認してください:",
+    "- SHAREPOINT_DRIVE_ID が 01.ドローン飛行日誌 を含むドキュメントライブラリの driveId になっている",
+    "- SHAREPOINT_ROOT_FOLDER_ITEM_ID が 01.ドローン飛行日誌 フォルダ、または年度管理/出力を直下に持つルートフォルダの itemId になっている",
+    "- このユーザーが対象フォルダにアクセスできる",
     detail ? `詳細:\n${detail}` : ""
   ].filter(Boolean).join("\n");
 }
@@ -1352,7 +1372,7 @@ async function resolveRootFolderDriveItem() {
     try {
       return await resolveFixedSharePointRootFolder();
     } catch (e) {
-      throw new Error(formatSharePointAccessError(e.message || e));
+      throw new Error(formatFixedSharePointAccessError(e.message || e));
     }
   }
 
@@ -2119,9 +2139,13 @@ window.debugGraphAccess = async function debugGraphAccess() {
     const siteId = siteResult.ok && siteResult.body?.id ? siteResult.body.id : "";
 
     let driveId = "";
+    let driveResult = null;
     if (siteId) {
-      const driveResult = await probe("4. site default drive", `/sites/${encodeURIComponent(siteId)}/drive?$select=id,name,webUrl`);
+      driveResult = await probe("4. site default drive", `/sites/${encodeURIComponent(siteId)}/drive?$select=id,name,webUrl`);
       driveId = driveResult.ok && driveResult.body?.id ? driveResult.body.id : "";
+      if (!driveResult.ok) {
+        console.warn("[debugGraphAccess] /sites/{siteId}/drive が失敗しました。Files.ReadWriteのみではsite pathからdriveIdを解決できない可能性が高いため、固定ID方式を使ってください。", driveResult);
+      }
     }
 
     if (siteId) {
@@ -2161,10 +2185,16 @@ window.debugGraphAccess = async function debugGraphAccess() {
       console.info(fixedIdConstSnippet(recommended));
     } else {
       console.warn("[debugGraphAccess] 固定ID候補を取得できませんでした。/sites または対象フォルダの権限を確認してください。");
+      if (driveResult && !driveResult.ok) console.warn(formatFixedIdSetupHint());
     }
     console.table(results.map(r => ({ step: r.step, status: r.status, ok: r.ok, endpoint: r.endpoint })));
     setOneDriveStatus(`Graph診断を実行しました。固定ID候補 ${fixedIdCandidates.length}件、Graph結果 ${results.length}件をConsoleで確認してください。`, results.some(r => r.ok === false) ? "warn" : "ok");
-    return { mode: "site-diagnostic", fixedIdCandidates, results };
+    return {
+      mode: "site-diagnostic",
+      fixedIdCandidates,
+      nextAction: fixedIdCandidates.length ? "固定ID候補をapp.js上部へ設定してください。" : "固定ID候補を取得できませんでした。サイト管理者または通るアカウントでdriveId/itemIdを取得してapp.jsへ設定してください。",
+      results
+    };
   } catch (e) {
     console.error("[debugGraphAccess] failed", e);
     setOneDriveStatus("Graph診断に失敗しました: " + (e.message || e), "err");
