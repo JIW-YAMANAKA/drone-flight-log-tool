@@ -22,7 +22,7 @@ const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
 const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
 const DEFAULT_YEARBOOK_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
 const DEFAULT_OUTPUT_FOLDER_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`;
-const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark-my.sharepoint.com/:f:/g/personal/ikko_yamanaka_jiw_co_jp/IgD8RZtP_qhFRa0GIl6Ai8yHAVRtCngVy97vD3ijlVqQwRo?e=wsNtNa";
+const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark-my.sharepoint.com/:f:/g/personal/ikko_yamanaka_jiw_co_jp/IgD8RZtP_qhFRa0GIl6Ai8yHAVRtCngVy97vD3ijlVqQwRo";
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
 const OD_KEYS = {
@@ -1092,33 +1092,32 @@ async function acquireGraphToken() {
 function encodeOneDrivePath(path) {
   return String(path || "").split("/").filter(Boolean).map(part => encodeURIComponent(part)).join("/");
 }
+function stripTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/, "");
+}
 function normalizeSharingUrlCandidate(url) {
   const raw = String(url || "").trim();
   if (!raw) return "";
   try {
     const u = new URL(raw);
     // OneDrive/SharePoint の共有リンク末尾に付く ?e=xxxx などの一時クエリは、
-    // Graph /shares で 308 Redirect の原因になることがあるため解決時だけ除外する。
+    // Graph /shares のURLエンコード時に別URL扱い・403の原因になることがあるため除外する。
     u.search = "";
     u.hash = "";
-    return u.toString();
+    return stripTrailingSlash(u.toString());
   } catch (_) {
-    return raw.split("#")[0].split("?")[0];
+    return stripTrailingSlash(raw.split("#")[0].split("?")[0]);
   }
 }
 function buildSharingUrlCandidates(url) {
   const raw = String(url || "").trim();
   const clean = normalizeSharingUrlCandidate(raw);
-  const list = [];
-  if (clean) list.push(clean);
-  if (raw && raw !== clean) list.push(raw);
-  // 末尾スラッシュ違いも環境によって解決結果が変わるため候補化する。
-  const more = [];
-  for (const v of list) {
-    if (v.endsWith("/")) more.push(v.slice(0, -1));
-    else more.push(v + "/");
-  }
-  return Array.from(new Set([...list, ...more].filter(Boolean)));
+  const rawNoHash = stripTrailingSlash(raw.split("#")[0]);
+  const rawNoQuery = stripTrailingSlash(rawNoHash.split("?")[0]);
+
+  // 共有リンクは末尾スラッシュを付けると Graph /shares で別URL扱いになる場合があるため、
+  // v20以降はスラッシュ付き候補を作らない。最優先は ?e=... を除いた正規化URL。
+  return Array.from(new Set([clean, rawNoQuery, rawNoHash].filter(Boolean)));
 }
 function encodeSharingUrlToToken(url) {
   const bytes = new TextEncoder().encode(String(url || ""));
