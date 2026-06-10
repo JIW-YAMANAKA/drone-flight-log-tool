@@ -22,7 +22,7 @@ const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
 const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
 const DEFAULT_YEARBOOK_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
 const DEFAULT_OUTPUT_FOLDER_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`;
-const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark-my.sharepoint.com/:f:/g/personal/ikko_yamanaka_jiw_co_jp/IgD8RZtP_qhFRa0GIl6Ai8yHAVRtCngVy97vD3ijlVqQwRo";
+const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark-my.sharepoint.com/:f:/g/personal/ikko_yamanaka_jiw_co_jp/IgD8RZtP_qhFRa0GIl6Ai8yHAVRtCngVy97vD3ijlVqQwRo?e=N8qytG";
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
 const OD_KEYS = {
@@ -1241,8 +1241,31 @@ async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク
 
       const shareToken = encodeSharingUrlToToken(candidateUrl);
       const apiUrl = `${GRAPH_ROOT}/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`;
-      const res = await graphFetch(apiUrl, { method: "GET", headers: { "Prefer": "redeemSharingLinkIfNecessary" } });
-      const item = await res.json();
+
+      // v21: 他ユーザーの初回アクセスでは /shares 解決時に 403 になることがあるため、
+      // 共有リンクの受け取りを明示する Prefer ヘッダーを複数パターンで試す。
+      // 1) redeemSharingLink: 初回受け取りを強制
+      // 2) redeemSharingLinkIfNecessary: 必要な場合だけ受け取り
+      // 3) ヘッダーなし: 既存互換
+      const shareResolveAttempts = [
+        { label: "redeemSharingLink", headers: { "Prefer": "redeemSharingLink" } },
+        { label: "redeemSharingLinkIfNecessary", headers: { "Prefer": "redeemSharingLinkIfNecessary" } },
+        { label: "noPrefer", headers: {} }
+      ];
+
+      let item = null;
+      let shareResolveLastError = null;
+      for (const attempt of shareResolveAttempts) {
+        try {
+          const res = await graphFetch(apiUrl, { method: "GET", headers: attempt.headers });
+          item = await res.json();
+          break;
+        } catch (attemptError) {
+          shareResolveLastError = attemptError;
+          console.warn(`${label}の共有リンク解決で失敗 (${attempt.label}):`, candidateUrl, attemptError);
+        }
+      }
+      if (!item) throw shareResolveLastError || new Error(`${label}の共有リンク解決に失敗しました。`);
 
       // 重要：共有リンクを「他のユーザー」が開くと、GraphのdriveItemは remoteItem として返ることがある。
       // その場合は item.id ではなく remoteItem.id / remoteItem.parentReference.driveId を使わないと、
