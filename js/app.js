@@ -23,8 +23,20 @@ const DEFAULT_OUTPUT_RELATIVE_FOLDER = "出力";
 const DEFAULT_YEARBOOK_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
 const DEFAULT_OUTPUT_FOLDER_PATH = `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`;
 const DEFAULT_ROOT_FOLDER_SHARE_URL = "https://japaninfrastructurewaymark.sharepoint.com/:f:/s/hiko-kiroku/IgBiiqwIBYDFRq9MY1u9cO2GAbJsLrEpIisD-3lG8SSzm2M";
-// v24: 共有リンク /shares 解決で403になる環境があるため、
-// SharePointサイトとドキュメントライブラリをGraphで直接たどる。
+const DEFAULT_YEARBOOK_RELATIVE_PATH_CANDIDATES = [
+  `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`,
+  DEFAULT_YEARBOOK_RELATIVE_PATH
+];
+const DEFAULT_OUTPUT_RELATIVE_FOLDER_CANDIDATES = [
+  `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`,
+  DEFAULT_OUTPUT_RELATIVE_FOLDER
+];
+// ここに値を入れると、管理者承認が必要になりがちな site path 解決を使わず、
+// Files.ReadWrite のまま /drives/{driveId}/items/{itemId} から直接たどる。
+const SHAREPOINT_DRIVE_ID = "";
+const SHAREPOINT_ROOT_FOLDER_ITEM_ID = "";
+// 共有リンク /shares 解決で403になる環境があるため、本番経路では使わない。
+// 固定IDが未設定の場合だけ、SharePointサイトとドキュメントライブラリをGraphで直接たどる。
 const DEFAULT_SHAREPOINT_HOSTNAME = "japaninfrastructurewaymark.sharepoint.com";
 const DEFAULT_SHAREPOINT_SITE_PATH = "hiko-kiroku";
 const DEFAULT_SHAREPOINT_ROOT_FOLDER_CANDIDATES = [DEFAULT_ROOT_FOLDER_PATH, ""];
@@ -1114,24 +1126,12 @@ function normalizeSharingUrlCandidate(url) {
     return stripTrailingSlash(raw.split("#")[0].split("?")[0]);
   }
 }
-function buildSharingUrlCandidates(url) {
-  const raw = String(url || "").trim();
-  const clean = normalizeSharingUrlCandidate(raw);
-  const rawNoHash = stripTrailingSlash(raw.split("#")[0]);
-  const rawNoQuery = stripTrailingSlash(rawNoHash.split("?")[0]);
-
-  // v23: SharePointサイト側フォルダを使う。Graph /shares には ?e=... 付きURLを渡さない。
-  // 他ユーザー利用時に 403 になる切り分けをしやすくするため、
-  // 正規化済みURL（クエリなし・末尾スラッシュなし）だけを候補にする。
-  return Array.from(new Set([clean, rawNoQuery].filter(Boolean)));
-}
 function encodeSharingUrlToToken(url) {
   const bytes = new TextEncoder().encode(String(url || ""));
   let binary = "";
   bytes.forEach(b => binary += String.fromCharCode(b));
   return "u!" + btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
-const sharedDriveItemCaches = new Map();
 function graphErrorDetail(url, status, body, statusText) {
   const shortUrl = String(url || "").replace(/^https:\/\/graph\.microsoft\.com\/v1\.0\//, "graph:/");
   const msg = body || statusText || "";
@@ -1227,132 +1227,51 @@ async function graphFetch(url, options = {}, redirectDepth = 0) {
   }
   return res;
 }
-async function resolveSharedDriveItemFromUrl(sourceUrl, label = "共有リンク") {
-  const originalUrl = String(sourceUrl || "").trim();
-  if (!originalUrl) return null;
-
-  const cached = sharedDriveItemCaches.get(originalUrl);
-  if (cached?.driveId && cached?.itemId) return cached;
-
-  const candidates = buildSharingUrlCandidates(originalUrl);
-  let lastError = null;
-
-  for (const candidateUrl of candidates) {
-    try {
-      const candidateCache = sharedDriveItemCaches.get(candidateUrl);
-      if (candidateCache?.driveId && candidateCache?.itemId) {
-        sharedDriveItemCaches.set(originalUrl, candidateCache);
-        return candidateCache;
-      }
-
-      const shareToken = encodeSharingUrlToToken(candidateUrl);
-      const apiUrl = `${GRAPH_ROOT}/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`;
-
-      // v21: 他ユーザーの初回アクセスでは /shares 解決時に 403 になることがあるため、
-      // 共有リンクの受け取りを明示する Prefer ヘッダーを複数パターンで試す。
-      // 1) redeemSharingLink: 初回受け取りを強制
-      // 2) redeemSharingLinkIfNecessary: 必要な場合だけ受け取り
-      // 3) ヘッダーなし: 既存互換
-      const shareResolveAttempts = [
-        { label: "redeemSharingLink", headers: { "Prefer": "redeemSharingLink" } },
-        { label: "redeemSharingLinkIfNecessary", headers: { "Prefer": "redeemSharingLinkIfNecessary" } },
-        { label: "noPrefer", headers: {} }
-      ];
-
-      let item = null;
-      let shareResolveLastError = null;
-      for (const attempt of shareResolveAttempts) {
-        try {
-          const res = await graphFetch(apiUrl, { method: "GET", headers: attempt.headers });
-          item = await res.json();
-          break;
-        } catch (attemptError) {
-          shareResolveLastError = attemptError;
-          console.warn(`${label}の共有リンク解決で失敗 (${attempt.label}):`, candidateUrl, attemptError);
-        }
-      }
-      if (!item) throw shareResolveLastError || new Error(`${label}の共有リンク解決に失敗しました。`);
-
-      // 重要：共有リンクを「他のユーザー」が開くと、GraphのdriveItemは remoteItem として返ることがある。
-      // その場合は item.id ではなく remoteItem.id / remoteItem.parentReference.driveId を使わないと、
-      // 後続の /content や /workbook が 308 Redirect になる環境がある。
-      const remote = item?.remoteItem || null;
-      const driveId = remote?.parentReference?.driveId || item?.parentReference?.driveId;
-      const itemId = remote?.id || item?.id;
-      const parentItemId = remote?.parentReference?.id || item?.parentReference?.id || "";
-      const name = remote?.name || item?.name || "";
-      const webUrl = remote?.webUrl || item?.webUrl || "";
-      const isFolder = Boolean(remote?.folder || item?.folder);
-      const isFile = Boolean(remote?.file || item?.file);
-
-      if (!driveId || !itemId) {
-        throw new Error(`${label}から driveId / itemId を取得できませんでした。リンクの権限を確認してください。`);
-      }
-
-      const resolved = {
-        sourceUrl: originalUrl,
-        resolvedShareUrl: candidateUrl,
-        driveId,
-        itemId,
-        parentItemId,
-        name,
-        isFolder,
-        isFile,
-        webUrl,
-        usedRemoteItem: Boolean(remote)
-      };
-
-      sharedDriveItemCaches.set(originalUrl, resolved);
-      sharedDriveItemCaches.set(candidateUrl, resolved);
-      return resolved;
-    } catch (e) {
-      lastError = e;
-      // ?e=付き共有リンク等で /shares が308になる場合があるため、候補URLを続けて試す。
-      console.warn(`${label}の解決候補で失敗:`, candidateUrl, e);
-    }
-  }
-
-  throw new Error(
-    `${label}の解決に失敗しました。共有リンクを作り直すか、リンク末尾の ?e=... を除いたURLで試してください。` +
-    (lastError ? ` 詳細: ${lastError.message}` : "")
-  );
-}
-
 async function getDriveItemMeta(driveId, itemId, select = 'id,name,parentReference,folder,file') {
   return await graphFetchJson(`${GRAPH_ROOT}/drives/${driveId}/items/${itemId}?$select=${encodeURIComponent(select).replaceAll('%2C', ',')}`, { method: 'GET' });
 }
-async function inferRootFolderFromSharedYearbookFile(fileItem) {
-  if (!fileItem?.isFile) return null;
-  if (!fileItem.driveId || !fileItem.parentItemId) return null;
-
-  // Excelファイル共有リンクが渡された場合でも使えるようにする。
-  // 想定: 01.ドローン飛行日誌/年度管理/2026_飛行時間.xlsx
-  // file parent = 年度管理, parent parent = 01.ドローン飛行日誌
-  const parent = await getDriveItemMeta(fileItem.driveId, fileItem.parentItemId);
-  if (!parent?.folder) return null;
-
-  if (parent.name === '年度管理' && parent.parentReference?.id) {
-    const root = await getDriveItemMeta(fileItem.driveId, parent.parentReference.id);
-    if (root?.folder) {
-      return {
-        driveId: fileItem.driveId,
-        itemId: root.id,
-        name: root.name || DEFAULT_ROOT_FOLDER_PATH,
-        isFolder: true,
-        isFile: false,
-        inferredFromYearbookFile: true
-      };
-    }
+function hasFixedSharePointRootFolderIds() {
+  return Boolean(String(SHAREPOINT_DRIVE_ID || "").trim() && String(SHAREPOINT_ROOT_FOLDER_ITEM_ID || "").trim());
+}
+function formatSharePointAccessError(detail = "") {
+  return [
+    `Microsoftログインは成功しましたが、SharePointサイト ${DEFAULT_SHAREPOINT_SITE_PATH} にアクセスできません。`,
+    "可能性:",
+    `- このユーザーが ${DEFAULT_SHAREPOINT_SITE_PATH} サイトまたは対象フォルダのメンバーではない`,
+    "- アプリのスコープに必要な権限がない",
+    "- site path解決に Sites.Read.All が必要",
+    "- fixed driveId / itemId が未設定",
+    detail ? `詳細:\n${detail}` : ""
+  ].filter(Boolean).join("\n");
+}
+function formatMissingItemError(title, candidates, errors = []) {
+  const lines = [
+    title,
+    "探した候補:",
+    ...candidates.map(path => `- ${path}`)
+  ];
+  if (errors.length) {
+    lines.push("詳細:");
+    lines.push(...errors.map(error => `- ${error}`));
   }
-
-  // 万一、年度管理フォルダではなくルート直下のExcelリンクだった場合は親フォルダをルート扱いする。
+  return lines.join("\n");
+}
+async function resolveFixedSharePointRootFolder() {
+  const driveId = String(SHAREPOINT_DRIVE_ID || "").trim();
+  const itemId = String(SHAREPOINT_ROOT_FOLDER_ITEM_ID || "").trim();
+  const item = await getDriveItemMeta(driveId, itemId, "id,name,parentReference,folder,file,webUrl");
+  if (!item?.folder) {
+    throw new Error(`固定IDの対象はフォルダではありません。GET /drives/${driveId}/items/${itemId}`);
+  }
   return {
-    driveId: fileItem.driveId,
-    itemId: parent.id,
-    name: parent.name || DEFAULT_ROOT_FOLDER_PATH,
+    driveId,
+    itemId: item.id,
+    parentItemId: item.parentReference?.id || "",
+    name: item.name || DEFAULT_ROOT_FOLDER_PATH,
     isFolder: true,
     isFile: false,
-    inferredFromYearbookFile: true
+    webUrl: item.webUrl || "",
+    viaFixedSharePointIds: true
   };
 }
 async function getDefaultSharePointSite() {
@@ -1381,9 +1300,9 @@ async function getDriveFolderByPath(driveId, folderPath) {
 }
 async function rootHasYearbookAndOutput(driveId, rootItemId) {
   try {
-    const yearbook = await resolveChildItemByRelativePath(driveId, rootItemId, DEFAULT_YEARBOOK_RELATIVE_PATH, "file");
-    const output = await resolveChildItemByRelativePath(driveId, rootItemId, DEFAULT_OUTPUT_RELATIVE_FOLDER, "folder");
-    return Boolean(yearbook?.id && output?.id);
+    const yearbook = await resolveChildItemByCandidatePaths(driveId, rootItemId, DEFAULT_YEARBOOK_RELATIVE_PATH_CANDIDATES, "file", "年度管理ブックが見つかりません。");
+    const output = await resolveChildItemByCandidatePaths(driveId, rootItemId, DEFAULT_OUTPUT_RELATIVE_FOLDER_CANDIDATES, "folder", "出力フォルダが見つかりません。");
+    return Boolean(yearbook?.item?.id && output?.item?.id);
   } catch (_) {
     return false;
   }
@@ -1408,79 +1327,40 @@ async function scanSharePointDriveForFlightLogRoot(driveId) {
 }
 async function resolveSharePointRootFolderDirect() {
   const { site, drive } = await getDefaultSharePointDrive();
-  const errors = [];
-
-  for (const folderPath of DEFAULT_SHAREPOINT_ROOT_FOLDER_CANDIDATES) {
-    try {
-      const candidate = await getDriveFolderByPath(drive.id, folderPath);
-      if (!candidate?.folder) continue;
-      if (await rootHasYearbookAndOutput(drive.id, candidate.id)) {
-        return {
-          driveId: drive.id,
-          itemId: candidate.id,
-          parentItemId: candidate.parentReference?.id || "",
-          name: candidate.name || (folderPath || "ドキュメント"),
-          isFolder: true,
-          isFile: false,
-          webUrl: candidate.webUrl || "",
-          siteId: site.id,
-          viaSharePointDirect: true
-        };
-      }
-      errors.push(`${folderPath || "ドキュメントルート"}: 年度管理/出力が見つかりません`);
-    } catch (e) {
-      errors.push(`${folderPath || "ドキュメントルート"}: ${e.message || e}`);
-    }
+  const root = await getDriveRootItem(drive.id);
+  if (!root?.folder) {
+    throw new Error("SharePointドキュメントライブラリのルートがフォルダとして取得できませんでした。");
   }
-
-  try {
-    const scanned = await scanSharePointDriveForFlightLogRoot(drive.id);
-    if (scanned?.folder) {
-      return {
-        driveId: drive.id,
-        itemId: scanned.id,
-        parentItemId: scanned.parentReference?.id || "",
-        name: scanned.name || DEFAULT_ROOT_FOLDER_PATH,
-        isFolder: true,
-        isFile: false,
-        webUrl: scanned.webUrl || "",
-        siteId: site.id,
-        viaSharePointDirect: true,
-        scanned: true
-      };
-    }
-  } catch (e) {
-    errors.push(`ドキュメントライブラリ走査: ${e.message || e}`);
-  }
-
-  throw new Error(`SharePointサイト「${DEFAULT_SHAREPOINT_SITE_PATH}」のドキュメントライブラリ内に「${DEFAULT_YEARBOOK_RELATIVE_PATH}」と「${DEFAULT_OUTPUT_RELATIVE_FOLDER}」を持つルートフォルダを見つけられませんでした。詳細: ${errors.join(" / ")}`);
+  return {
+    driveId: drive.id,
+    itemId: root.id,
+    parentItemId: root.parentReference?.id || "",
+    name: root.name || "ドキュメント",
+    isFolder: true,
+    isFile: false,
+    webUrl: root.webUrl || "",
+    siteId: site.id,
+    viaSharePointDirect: true
+  };
 }
 async function resolveRootFolderDriveItem() {
-  let directError = null;
+  if (hasFixedSharePointRootFolderIds()) {
+    try {
+      return await resolveFixedSharePointRootFolder();
+    } catch (e) {
+      throw new Error(formatSharePointAccessError(e.message || e));
+    }
+  }
+
   try {
     const direct = await resolveSharePointRootFolderDirect();
     if (direct?.isFolder) return direct;
   } catch (e) {
-    directError = e;
     console.warn('SharePoint直接解決に失敗:', e);
+    throw new Error(formatSharePointAccessError(e.message || e));
   }
 
-  const rootShareUrl = getOneDriveRootFolderShareUrl();
-  try {
-    const item = await resolveSharedDriveItemFromUrl(rootShareUrl, 'ドローン飛行日誌固定リンク');
-    if (item?.isFolder) return item;
-
-    const inferred = await inferRootFolderFromSharedYearbookFile(item);
-    if (inferred?.isFolder) return inferred;
-  } catch (shareError) {
-    throw new Error(
-      'SharePoint直接アクセスと共有リンク解決の両方に失敗しました。' +
-      (directError ? ` SharePoint直接: ${directError.message}` : '') +
-      ` / 共有リンク: ${shareError.message}`
-    );
-  }
-
-  throw new Error('固定リンクからドローン飛行日誌ルートフォルダを特定できませんでした。フォルダ共有リンク、または「年度管理/2026_飛行時間.xlsx」の共有リンクを設定してください。');
+  throw new Error(formatSharePointAccessError("固定driveId / itemIdもSharePoint site pathも利用できませんでした。"));
 }
 async function findChildItemByName(driveId, parentItemId, childName) {
   const listUrl = `${GRAPH_ROOT}/drives/${driveId}/items/${parentItemId}/children?$select=id,name,folder,file,parentReference&$top=999`;
@@ -1494,7 +1374,7 @@ async function resolveChildItemByRelativePath(driveId, parentItemId, relativePat
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     const child = await findChildItemByName(driveId, current.id, part);
-    if (!child) throw new Error(`ルート共有フォルダ内に「${relativePath}」が見つかりません。見つからなかった階層：${part}`);
+    if (!child) throw new Error(`ルートフォルダ内に「${relativePath}」が見つかりません。見つからなかった階層：${part}`);
     const isLast = i === parts.length - 1;
     if (!isLast && !child.folder) throw new Error(`「${part}」はフォルダではありません。パス：${relativePath}`);
     current = child;
@@ -1503,17 +1383,41 @@ async function resolveChildItemByRelativePath(driveId, parentItemId, relativePat
   if (expectedKind === "folder" && !current.folder) throw new Error(`指定パスはフォルダではありません：${relativePath}`);
   return current;
 }
+async function resolveChildItemByCandidatePaths(driveId, parentItemId, candidates, expectedKind, missingTitle) {
+  const errors = [];
+  for (const relativePath of candidates) {
+    try {
+      const item = await resolveChildItemByRelativePath(driveId, parentItemId, relativePath, expectedKind);
+      return { item, relativePath };
+    } catch (e) {
+      errors.push(`${relativePath}: ${e.message || e}`);
+    }
+  }
+  throw new Error(formatMissingItemError(missingTitle, candidates, errors));
+}
 async function resolveYearbookItemByRootFolder() {
   const root = await resolveRootFolderDriveItem();
   if (!root) return null;
-  const item = await resolveChildItemByRelativePath(root.driveId, root.itemId, DEFAULT_YEARBOOK_RELATIVE_PATH, "file");
-  return { driveId: root.driveId, itemId: item.id, name: item.name || "2026_飛行時間.xlsx", isFile: true, isFolder: false, viaRootFolder: true };
+  const { item, relativePath } = await resolveChildItemByCandidatePaths(
+    root.driveId,
+    root.itemId,
+    DEFAULT_YEARBOOK_RELATIVE_PATH_CANDIDATES,
+    "file",
+    "年度管理ブックが見つかりません。"
+  );
+  return { driveId: root.driveId, itemId: item.id, name: item.name || "2026_飛行時間.xlsx", isFile: true, isFolder: false, viaRootFolder: true, relativePath };
 }
 async function resolveOutputBaseFolderByRootFolder() {
   const root = await resolveRootFolderDriveItem();
   if (!root) return null;
-  const output = await ensureChildFolder(root.driveId, root.itemId, DEFAULT_OUTPUT_RELATIVE_FOLDER);
-  return { driveId: root.driveId, itemId: output.id, name: output.name || DEFAULT_OUTPUT_RELATIVE_FOLDER, isFolder: true, label: `ルート共有フォルダ/${DEFAULT_OUTPUT_RELATIVE_FOLDER}` };
+  const { item, relativePath } = await resolveChildItemByCandidatePaths(
+    root.driveId,
+    root.itemId,
+    DEFAULT_OUTPUT_RELATIVE_FOLDER_CANDIDATES,
+    "folder",
+    "出力フォルダが見つかりません。"
+  );
+  return { driveId: root.driveId, itemId: item.id, name: item.name || DEFAULT_OUTPUT_RELATIVE_FOLDER, isFolder: true, label: `SharePoint/${relativePath}`, relativePath };
 }
 async function resolveSharedDriveItem() {
   const rootItem = await resolveYearbookItemByRootFolder();
@@ -2055,6 +1959,121 @@ async function testOneDriveYearbook() {
     setOneDriveStatus("接続テストに失敗しました: " + e.message, "err");
   }
 }
+
+function decodeJwtPayload(token) {
+  try {
+    const payload = String(token || "").split(".")[1] || "";
+    if (!payload) return {};
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    return JSON.parse(atob(padded));
+  } catch (_) {
+    return {};
+  }
+}
+function summarizeTokenScopes(token) {
+  const claims = decodeJwtPayload(token);
+  const tokenScopes = String(claims.scp || "").split(/\s+/).filter(Boolean);
+  return {
+    requestedScopes: GRAPH_SCOPES,
+    tokenScopes,
+    tenantId: claims.tid || "",
+    audience: claims.aud || "",
+    expiresAt: claims.exp ? new Date(Number(claims.exp) * 1000).toISOString() : ""
+  };
+}
+async function debugGraphFetchWithToken(token, endpoint, options = {}) {
+  const url = endpoint.startsWith("http") ? endpoint : `${GRAPH_ROOT}${endpoint}`;
+  const headers = new Headers(options.headers || {});
+  headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(url, { ...options, headers });
+  let body = "";
+  try {
+    const text = await res.text();
+    try { body = text ? JSON.parse(text) : ""; }
+    catch (_) { body = text; }
+  } catch (e) {
+    body = `レスポンス本文を読めませんでした: ${e.message || e}`;
+  }
+  return { endpoint, status: res.status, ok: res.ok, body };
+}
+window.debugGraphAccess = async function debugGraphAccess() {
+  const results = [];
+  try {
+    const token = await acquireGraphToken();
+    const addResult = (step, result) => {
+      const entry = { step, ...result };
+      results.push(entry);
+      console.log(`[debugGraphAccess] ${step}`, entry);
+      return entry;
+    };
+    const probe = async (step, endpoint, options = {}) => addResult(step, await debugGraphFetchWithToken(token, endpoint, options));
+
+    await probe("1. /me", "/me?$select=id,displayName,userPrincipalName,mail");
+
+    addResult("2. token scopes", {
+      endpoint: "accessToken.scp",
+      status: "ok",
+      ok: true,
+      body: summarizeTokenScopes(token)
+    });
+
+    const siteEndpoint = `/sites/${DEFAULT_SHAREPOINT_HOSTNAME}:/sites/${encodeOneDrivePath(DEFAULT_SHAREPOINT_SITE_PATH)}?$select=id,displayName,webUrl,name`;
+    const siteResult = await probe("3. SharePoint site path", siteEndpoint);
+    const siteId = siteResult.ok && siteResult.body?.id ? siteResult.body.id : "";
+
+    let driveId = "";
+    if (siteId) {
+      const driveResult = await probe("4. site default drive", `/sites/${encodeURIComponent(siteId)}/drive?$select=id,name,webUrl`);
+      driveId = driveResult.ok && driveResult.body?.id ? driveResult.body.id : "";
+    }
+
+    if (siteId && driveId) {
+      const select = "$select=id,name,parentReference,folder,file,webUrl";
+      for (const path of [
+        DEFAULT_ROOT_FOLDER_PATH,
+        `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`,
+        `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`,
+        DEFAULT_YEARBOOK_RELATIVE_PATH,
+        DEFAULT_OUTPUT_RELATIVE_FOLDER
+      ]) {
+        await probe(`5. path: ${path}`, `/sites/${encodeURIComponent(siteId)}/drive/root:/${encodeOneDrivePath(path)}:?${select}`);
+      }
+    }
+
+    if (hasFixedSharePointRootFolderIds()) {
+      const fixedDriveId = String(SHAREPOINT_DRIVE_ID || "").trim();
+      const fixedItemId = String(SHAREPOINT_ROOT_FOLDER_ITEM_ID || "").trim();
+      await probe("6. fixed item", `/drives/${fixedDriveId}/items/${fixedItemId}?$select=id,name,parentReference,folder,file,webUrl`);
+      await probe("6. fixed item children", `/drives/${fixedDriveId}/items/${fixedItemId}/children?$select=id,name,parentReference,folder,file,webUrl&$top=999`);
+    } else {
+      addResult("6. fixed item", {
+        endpoint: "/drives/{SHAREPOINT_DRIVE_ID}/items/{SHAREPOINT_ROOT_FOLDER_ITEM_ID}",
+        status: "skipped",
+        ok: false,
+        body: "SHAREPOINT_DRIVE_ID / SHAREPOINT_ROOT_FOLDER_ITEM_ID が未設定です。"
+      });
+    }
+
+    const shareUrl = normalizeSharingUrlCandidate(getOneDriveRootFolderShareUrl());
+    if (shareUrl) {
+      const shareToken = encodeSharingUrlToToken(shareUrl);
+      await probe(
+        "7. /shares diagnostic only",
+        `/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`,
+        { headers: { Prefer: "redeemSharingLinkIfNecessary" } }
+      );
+    }
+
+    console.table(results.map(r => ({ step: r.step, status: r.status, ok: r.ok, endpoint: r.endpoint })));
+    setOneDriveStatus(`Graph診断を実行しました。${results.length}件の結果をConsoleで確認してください。`, results.some(r => r.ok === false) ? "warn" : "ok");
+    return results;
+  } catch (e) {
+    console.error("[debugGraphAccess] failed", e);
+    setOneDriveStatus("Graph診断に失敗しました: " + (e.message || e), "err");
+    throw e;
+  }
+};
 
 
 function csvRowKey(row) {
