@@ -16,6 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
+const APP_BUILD_VERSION = "v25-graph-direct-20260610";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -77,6 +78,9 @@ let outputRedBoldStyleMap = null;
 let msalApp = null;
 let msalConfigKey = "";
 let msalAccount = null;
+
+window.flightLogAppVersion = APP_BUILD_VERSION;
+console.info(`Drone Flight Log Tool ${APP_BUILD_VERSION}`);
 
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
