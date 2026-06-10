@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v25-graph-direct-20260610";
+const APP_BUILD_VERSION = "v26-fixed-id-debug-20260610";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -2001,8 +2001,78 @@ async function debugGraphFetchWithToken(token, endpoint, options = {}) {
   }
   return { endpoint, status: res.status, ok: res.ok, body };
 }
+function extractFixedIdCandidateFromDriveItem(item, fallbackDriveId = "") {
+  const driveItem = item?.remoteItem || item || {};
+  const parentReference = driveItem.parentReference || item?.parentReference || {};
+  const driveId = parentReference.driveId || fallbackDriveId || "";
+  const itemId = driveItem.id || "";
+  if (!driveId || !itemId) return null;
+  return {
+    SHAREPOINT_DRIVE_ID: driveId,
+    SHAREPOINT_ROOT_FOLDER_ITEM_ID: itemId,
+    name: driveItem.name || item?.name || "",
+    webUrl: driveItem.webUrl || item?.webUrl || "",
+    source: item?.remoteItem ? "remoteItem" : "driveItem"
+  };
+}
+function fixedIdConstSnippet(candidate) {
+  if (!candidate) return "";
+  return [
+    `const SHAREPOINT_DRIVE_ID = "${candidate.SHAREPOINT_DRIVE_ID}";`,
+    `const SHAREPOINT_ROOT_FOLDER_ITEM_ID = "${candidate.SHAREPOINT_ROOT_FOLDER_ITEM_ID}";`
+  ].join("\n");
+}
+function collectFixedIdCandidate(candidates, label, result, role, fallbackDriveId = "") {
+  if (!result?.ok) return null;
+  const candidate = extractFixedIdCandidateFromDriveItem(result.body, fallbackDriveId);
+  if (!candidate) return null;
+  const entry = {
+    role,
+    label,
+    name: candidate.name,
+    SHAREPOINT_DRIVE_ID: candidate.SHAREPOINT_DRIVE_ID,
+    SHAREPOINT_ROOT_FOLDER_ITEM_ID: candidate.SHAREPOINT_ROOT_FOLDER_ITEM_ID,
+    webUrl: candidate.webUrl,
+    source: candidate.source
+  };
+  candidates.push(entry);
+  console.info(`[debugGraphAccess] 固定ID候補: ${label}`, entry);
+  console.info(fixedIdConstSnippet(entry));
+  return entry;
+}
+async function debugResolveDriveRelativePath(token, addResult, driveId, parentItemId, relativePath, expectedKind = "any") {
+  const parts = String(relativePath || "").split(/[\\/]+/).map(s => s.trim()).filter(Boolean);
+  let current = { id: parentItemId, name: "(root)" };
+  for (const part of parts) {
+    const endpoint = `/drives/${driveId}/items/${current.id}/children?$select=id,name,parentReference,folder,file,webUrl&$top=999`;
+    const result = await debugGraphFetchWithToken(token, endpoint);
+    addResult(`fixed path: ${relativePath} / children of ${current.name}`, result);
+    if (!result.ok) return null;
+    const child = (result.body?.value || []).find(item => item.name === part) || null;
+    if (!child) {
+      addResult(`fixed path: ${relativePath} / missing ${part}`, {
+        endpoint,
+        status: "notFound",
+        ok: false,
+        body: `children内に「${part}」が見つかりません。`
+      });
+      return null;
+    }
+    current = child;
+  }
+  if (expectedKind === "file" && !current.file) return null;
+  if (expectedKind === "folder" && !current.folder) return null;
+  addResult(`fixed path: ${relativePath} / resolved`, {
+    endpoint: `/drives/${driveId}/items/${current.id}`,
+    status: "ok",
+    ok: true,
+    body: current
+  });
+  return current;
+}
 window.debugGraphAccess = async function debugGraphAccess() {
   const results = [];
+  const fixedIdCandidates = [];
   try {
     const token = await acquireGraphToken();
     const addResult = (step, result) => {
@@ -2022,6 +2092,28 @@ window.debugGraphAccess = async function debugGraphAccess() {
       body: summarizeTokenScopes(token)
     });
 
+    if (hasFixedSharePointRootFolderIds()) {
+      const fixedDriveId = String(SHAREPOINT_DRIVE_ID || "").trim();
+      const fixedItemId = String(SHAREPOINT_ROOT_FOLDER_ITEM_ID || "").trim();
+      console.info("[debugGraphAccess] 固定IDが設定済みのため、/sites と /shares は実行しません。");
+
+      const fixedRoot = await probe("3. fixed root item", `/drives/${fixedDriveId}/items/${fixedItemId}?$select=id,name,parentReference,folder,file,webUrl`);
+      collectFixedIdCandidate(fixedIdCandidates, "現在設定中の固定ルート", fixedRoot, "configured-root", fixedDriveId);
+      await probe("4. fixed root children", `/drives/${fixedDriveId}/items/${fixedItemId}/children?$select=id,name,parentReference,folder,file,webUrl&$top=999`);
+
+      for (const path of DEFAULT_YEARBOOK_RELATIVE_PATH_CANDIDATES) {
+        await debugResolveDriveRelativePath(token, addResult, fixedDriveId, fixedItemId, path, "file");
+      }
+      for (const path of DEFAULT_OUTPUT_RELATIVE_FOLDER_CANDIDATES) {
+        await debugResolveDriveRelativePath(token, addResult, fixedDriveId, fixedItemId, path, "folder");
+      }
+
+      console.table(fixedIdCandidates);
+      console.table(results.map(r => ({ step: r.step, status: r.status, ok: r.ok, endpoint: r.endpoint })));
+      setOneDriveStatus(`Graph診断を固定IDモードで実行しました。/sites と /shares は使用していません。${results.length}件の結果をConsoleで確認してください。`, results.some(r => r.ok === false) ? "warn" : "ok");
+      return { mode: "fixed-id", fixedIdCandidates, results };
+    }
+
     const siteEndpoint = `/sites/${DEFAULT_SHAREPOINT_HOSTNAME}:/sites/${encodeOneDrivePath(DEFAULT_SHAREPOINT_SITE_PATH)}?$select=id,displayName,webUrl,name`;
     const siteResult = await probe("3. SharePoint site path", siteEndpoint);
     const siteId = siteResult.ok && siteResult.body?.id ? siteResult.body.id : "";
@@ -2032,46 +2124,47 @@ window.debugGraphAccess = async function debugGraphAccess() {
       driveId = driveResult.ok && driveResult.body?.id ? driveResult.body.id : "";
     }
 
-    if (siteId && driveId) {
+    if (siteId) {
       const select = "$select=id,name,parentReference,folder,file,webUrl";
+      const driveRoot = await probe("5. root candidate: ドキュメントルート", `/sites/${encodeURIComponent(siteId)}/drive/root?${select}`);
+      collectFixedIdCandidate(fixedIdCandidates, "ドキュメントルート（年度管理/出力が直下の場合）", driveRoot, "root-candidate", driveId);
+
+      const rootFolder = await probe(`5. root candidate: ${DEFAULT_ROOT_FOLDER_PATH}`, `/sites/${encodeURIComponent(siteId)}/drive/root:/${encodeOneDrivePath(DEFAULT_ROOT_FOLDER_PATH)}:?${select}`);
+      collectFixedIdCandidate(fixedIdCandidates, DEFAULT_ROOT_FOLDER_PATH, rootFolder, "root-candidate", driveId);
+
       for (const path of [
-        DEFAULT_ROOT_FOLDER_PATH,
         `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_YEARBOOK_RELATIVE_PATH}`,
         `${DEFAULT_ROOT_FOLDER_PATH}/${DEFAULT_OUTPUT_RELATIVE_FOLDER}`,
         DEFAULT_YEARBOOK_RELATIVE_PATH,
         DEFAULT_OUTPUT_RELATIVE_FOLDER
       ]) {
-        await probe(`5. path: ${path}`, `/sites/${encodeURIComponent(siteId)}/drive/root:/${encodeOneDrivePath(path)}:?${select}`);
+        await probe(`6. path check: ${path}`, `/sites/${encodeURIComponent(siteId)}/drive/root:/${encodeOneDrivePath(path)}:?${select}`);
       }
-    }
-
-    if (hasFixedSharePointRootFolderIds()) {
-      const fixedDriveId = String(SHAREPOINT_DRIVE_ID || "").trim();
-      const fixedItemId = String(SHAREPOINT_ROOT_FOLDER_ITEM_ID || "").trim();
-      await probe("6. fixed item", `/drives/${fixedDriveId}/items/${fixedItemId}?$select=id,name,parentReference,folder,file,webUrl`);
-      await probe("6. fixed item children", `/drives/${fixedDriveId}/items/${fixedItemId}/children?$select=id,name,parentReference,folder,file,webUrl&$top=999`);
-    } else {
-      addResult("6. fixed item", {
-        endpoint: "/drives/{SHAREPOINT_DRIVE_ID}/items/{SHAREPOINT_ROOT_FOLDER_ITEM_ID}",
-        status: "skipped",
-        ok: false,
-        body: "SHAREPOINT_DRIVE_ID / SHAREPOINT_ROOT_FOLDER_ITEM_ID が未設定です。"
-      });
     }
 
     const shareUrl = normalizeSharingUrlCandidate(getOneDriveRootFolderShareUrl());
     if (shareUrl) {
       const shareToken = encodeSharingUrlToToken(shareUrl);
-      await probe(
+      const shareResult = await probe(
         "7. /shares diagnostic only",
         `/shares/${shareToken}/driveItem?$select=id,name,webUrl,parentReference,folder,file,remoteItem`,
         { headers: { Prefer: "redeemSharingLinkIfNecessary" } }
       );
+      collectFixedIdCandidate(fixedIdCandidates, "共有リンク診断のみ（本番経路では使いません）", shareResult, "share-diagnostic-only", driveId);
     }
 
+    if (fixedIdCandidates.length) {
+      console.info("[debugGraphAccess] SHAREPOINT_DRIVE_ID / SHAREPOINT_ROOT_FOLDER_ITEM_ID 候補");
+      console.table(fixedIdCandidates);
+      const recommended = fixedIdCandidates.find(c => c.label === DEFAULT_ROOT_FOLDER_PATH) || fixedIdCandidates[0];
+      console.info("[debugGraphAccess] 推奨コピー候補");
+      console.info(fixedIdConstSnippet(recommended));
+    } else {
+      console.warn("[debugGraphAccess] 固定ID候補を取得できませんでした。/sites または対象フォルダの権限を確認してください。");
+    }
     console.table(results.map(r => ({ step: r.step, status: r.status, ok: r.ok, endpoint: r.endpoint })));
-    setOneDriveStatus(`Graph診断を実行しました。${results.length}件の結果をConsoleで確認してください。`, results.some(r => r.ok === false) ? "warn" : "ok");
-    return results;
+    setOneDriveStatus(`Graph診断を実行しました。固定ID候補 ${fixedIdCandidates.length}件、Graph結果 ${results.length}件をConsoleで確認してください。`, results.some(r => r.ok === false) ? "warn" : "ok");
+    return { mode: "site-diagnostic", fixedIdCandidates, results };
   } catch (e) {
     console.error("[debugGraphAccess] failed", e);
     setOneDriveStatus("Graph診断に失敗しました: " + (e.message || e), "err");
