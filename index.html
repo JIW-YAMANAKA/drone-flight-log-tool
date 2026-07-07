@@ -29,6 +29,14 @@
     .inline-check{display:flex;gap:8px;align-items:flex-start;font-weight:700;margin-top:10px}
     .inline-check input{width:auto;margin-top:4px}
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .csv-loaded{margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fbfcfe;font-size:13px;min-height:64px}
+    .csv-loaded.empty{color:var(--muted);display:flex;align-items:center}
+    .csv-loaded-head{font-weight:700;color:var(--text);margin-bottom:6px}
+    .csv-loaded-item{display:flex;gap:8px;align-items:baseline;padding:4px 0;border-top:1px dashed var(--line)}
+    .csv-loaded-item:first-of-type{border-top:0}
+    .csv-no{color:var(--accent);font-weight:800;min-width:32px}
+    .csv-name{flex:1;word-break:break-all}
+    .csv-detail{color:var(--muted);font-size:12px;white-space:nowrap}
     @media(max-width:900px){.checkgrid{grid-template-columns:1fr}}
   </style>
 </head>
@@ -70,8 +78,10 @@
       <h2>STEP 2｜CSVを読み込み、内容を入力</h2>
       <div class="wide-grid">
         <div>
-          <label for="csvFile">飛行履歴CSV（複数・追加読込対応）</label>
+          <label for="csvFile">飛行履歴CSV（複数選択OK・追加読込対応）</label>
           <input id="csvFile" type="file" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" />
+          <div class="hint">Ctrlキーを押しながら選ぶと複数を一度に選択できます。あとから追加読み込みもできます。</div>
+          <div id="csvLoadedList" class="csv-loaded empty">まだ読み込んでいません。CSVを選んで「CSVを追加読み込み」を押してください。</div>
         </div>
 
         <div class="input-grid">
@@ -80,18 +90,19 @@
             <select id="targetDate" disabled><option value="">CSV読込後に選択</option></select>
           </div>
           <div>
-            <label for="vehicleNameSelect">Vehicle Name</label>
-            <select id="vehicleNameSelect" disabled><option value="">CSV読込後に自動表示</option></select>
+            <label for="vehicleNameSelect">機体名</label>
+            <select id="vehicleNameSelect" disabled><option value="">CSV読込後に選択</option></select>
           </div>
           <div>
             <label for="registrationId">無人航空機の登録記号</label>
-            <input id="registrationId" type="text" placeholder="例：JUxxxxxxxx" />
+            <input id="registrationId" type="text" placeholder="機体名選択後に自動表示" />
             <select id="registrationCandidateSelect" class="hide" style="margin-top:8px"></select>
             <div id="registrationMatchHint" class="hint"></div>
           </div>
           <div>
             <label for="pilotName">操縦者名</label>
-            <input id="pilotName" type="text" placeholder="例：山田 太郎" />
+            <input id="pilotName" type="text" placeholder="例：山田 太郎" list="pilotNameList" autocomplete="off" />
+            <datalist id="pilotNameList"></datalist>
           </div>
           <div class="span4 optional">
             <details id="purposeDetails">
@@ -218,16 +229,20 @@
     </section>
 
     <section class="card mt">
-      <h2>STEP 3｜Excelを作成してダウンロード</h2>
-      <p class="mini" style="margin:-4px 0 12px">内容を確認できたら飛行日誌を作成します。SharePointへ保存し、手元にもダウンロードします。</p>
-      <div class="actions" style="margin-top:0">
-        <button id="downloadBtn" class="secondary" type="button" disabled>Excelを作成してダウンロード</button>
+      <h2>STEP 3｜飛行日誌を作成</h2>
+      <p class="mini" style="margin:-4px 0 12px">飛行日誌を作成し、SharePointへ自動保存します（年度管理ブックも自動更新）。手元へのダウンロードは任意です。</p>
+      <label class="inline-check" style="margin-top:0">
+        <input id="downloadDiaryLocal" type="checkbox" checked />
+        <span>作成した飛行日誌を手元にもダウンロードする</span>
+      </label>
+      <div class="actions">
+        <button id="downloadBtn" class="secondary" type="button" disabled>飛行日誌を作成</button>
       </div>
       <div id="status" class="status">CSVを選択して「CSVを追加読み込み」を押してください。</div>
     </section>
   </div>
 
-  <script src="js/app.js?v=v31-step-reorder-20260712"></script>
+  <script src="js/app.js?v=v34-pilot-autocomplete-optional-download-20260712"></script>
 
 </body>
 </html>

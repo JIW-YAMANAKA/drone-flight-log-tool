@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v31-step-reorder-20260712";
+const APP_BUILD_VERSION = "v34-pilot-autocomplete-optional-download-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -64,7 +64,8 @@ const OD_KEYS = {
   initialMaintenancePlaceCustom: "flightLog.initialMaintenancePlaceCustom",
   maintenanceEngineer: "flightLog.maintenanceEngineerOverride",
   maintenanceRemarks: "flightLog.maintenanceRemarks",
-  downloadMaintenance: "flightLog.downloadMaintenanceRecord"
+  downloadMaintenance: "flightLog.downloadMaintenanceRecord",
+  downloadDiary: "flightLog.downloadDiaryLocal"
 };
 const VEHICLE_REG_MAP_KEY = "flightLogVehicleRegistrationMap.v1";
 
@@ -251,7 +252,7 @@ function updateVehicleNameSelect() {
   const previous = sel.value;
   if (!names.length) {
     sel.disabled = true;
-    sel.innerHTML = '<option value="">CSV読込後に自動表示</option>';
+    sel.innerHTML = '<option value="">CSV読込後に選択</option>';
     return;
   }
   sel.disabled = false;
@@ -949,6 +950,10 @@ function loadOneDriveUiSettings() {
     const saved = localStorage.getItem(OD_KEYS.downloadMaintenance);
     $('downloadMaintenanceRecord').checked = saved == null ? false : saved === '1';
   }
+  if ($('downloadDiaryLocal')) {
+    const saved = localStorage.getItem(OD_KEYS.downloadDiary);
+    $('downloadDiaryLocal').checked = saved == null ? true : saved === '1';
+  }
 }
 function saveOneDriveUiSettings() {
   if ($('saveDiaryToOneDrive')) localStorage.setItem(OD_KEYS.saveDiary, $('saveDiaryToOneDrive').checked ? '1' : '0');
@@ -958,6 +963,7 @@ function saveOneDriveUiSettings() {
   if ($('maintenanceEngineerOverride')) localStorage.setItem(OD_KEYS.maintenanceEngineer, $('maintenanceEngineerOverride').value.trim());
   if ($('maintenanceRemarks')) localStorage.setItem(OD_KEYS.maintenanceRemarks, $('maintenanceRemarks').value.trim());
   if ($('downloadMaintenanceRecord')) localStorage.setItem(OD_KEYS.downloadMaintenance, $('downloadMaintenanceRecord').checked ? '1' : '0');
+  if ($('downloadDiaryLocal')) localStorage.setItem(OD_KEYS.downloadDiary, $('downloadDiaryLocal').checked ? '1' : '0');
 }
 function getOneDriveTenant() {
   return DEFAULT_MS_TENANT_ID;
@@ -2250,6 +2256,42 @@ function updateCsvCacheStatus() {
   const skipped = csvImportFiles.reduce((sum, f) => sum + Number(f.skipped || 0), 0);
   el.textContent = `CSVキャッシュ：${files}回読込 / ${parsedRows.length}フライト / ${vehicleCount}機体 / ${dates}日${skipped ? ` / 重複除外 ${skipped}件` : ""}`;
 }
+function updateCsvLoadedList() {
+  const el = $("csvLoadedList");
+  if (!el) return;
+  if (!csvImportFiles.length) {
+    el.className = "csv-loaded empty";
+    el.textContent = "まだ読み込んでいません。CSVを選んで「CSVを追加読み込み」を押してください。";
+    return;
+  }
+  el.className = "csv-loaded";
+  const items = csvImportFiles.map((f, i) =>
+    `<div class="csv-loaded-item"><span class="csv-no">(${i + 1})</span><span class="csv-name">${escHtml(f.name)}</span><span class="csv-detail">追加 ${f.added || 0} / 重複 ${f.skipped || 0}</span></div>`
+  ).join("");
+  el.innerHTML = `<div class="csv-loaded-head">読み込み済みCSV：${csvImportFiles.length}件 / 合計 ${parsedRows.length}フライト</div>${items}`;
+}
+function shouldDownloadDiaryLocal() {
+  const el = $("downloadDiaryLocal");
+  return el ? el.checked : true;
+}
+const PILOT_NAMES_KEY = "flightLogPilotNames.v1";
+function loadPilotNames() {
+  try { const a = JSON.parse(localStorage.getItem(PILOT_NAMES_KEY) || "[]"); return Array.isArray(a) ? a : []; }
+  catch (_) { return []; }
+}
+function savePilotName(name) {
+  const n = String(name || "").trim();
+  if (!n) return;
+  const list = loadPilotNames().filter(x => x !== n);
+  list.unshift(n);
+  localStorage.setItem(PILOT_NAMES_KEY, JSON.stringify(list.slice(0, 30)));
+  populatePilotNameList();
+}
+function populatePilotNameList() {
+  const dl = $("pilotNameList");
+  if (!dl) return;
+  dl.innerHTML = loadPilotNames().map(n => `<option value="${escHtml(n)}"></option>`).join("");
+}
 function readFileAsText(file, encoding) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2284,6 +2326,7 @@ function refreshAfterCsvChange(messageKind = "ok", customMessage = "") {
   renderPreview(parsedRows);
   updateDateSelect();
   updateCsvCacheStatus();
+  updateCsvLoadedList();
   $("downloadBtn").disabled = !parsedRows.length;
   const chunks = buildPageChunks(getSelectedRows());
   const vehicleCount = uniqueVehicleNames(parsedRows).length;
@@ -2297,11 +2340,12 @@ function clearCsvCache() {
   csvSeenKeys = new Set();
   if ($("csvFile")) $("csvFile").value = "";
   if ($("targetDate")) { $("targetDate").innerHTML = '<option value="">CSV読込後に選択</option>'; $("targetDate").disabled = true; }
-  if ($("vehicleNameSelect")) { $("vehicleNameSelect").innerHTML = '<option value="">CSV読込後に自動表示</option>'; $("vehicleNameSelect").disabled = true; }
+  if ($("vehicleNameSelect")) { $("vehicleNameSelect").innerHTML = '<option value="">CSV読込後に選択</option>'; $("vehicleNameSelect").disabled = true; }
   if ($("registrationId")) $("registrationId").value = "";
   if ($("registrationCandidateSelect")) { $("registrationCandidateSelect").innerHTML = ""; $("registrationCandidateSelect").classList.add("hide"); }
   renderPreview([]);
   updateCsvCacheStatus();
+  updateCsvLoadedList();
   updatePageSelects();
   $("downloadBtn").disabled = true;
   setStatus("CSVキャッシュをクリアしました。", "ok");
@@ -2403,6 +2447,7 @@ async function downloadWorkbook() {
   if (!selectedDate || !selectedRows.length) { setStatus("転記対象日を選択してください。", "warn"); return; }
   $("downloadBtn").disabled = true;
   try {
+    savePilotName($("pilotName").value);
     await enrichLocations(selectedRows);
 
     // 年度管理ブックはSharePoint固定の1冊を使う。手動アップロードは廃止した。
@@ -2447,7 +2492,7 @@ async function downloadWorkbook() {
     if (usingOneDrive && yearbookResult.updatedBlob) {
       setStatus("OneDrive年度管理ブックの対象セルを更新中...", "");
       await uploadYearbookToOneDrive(yearbookResult.updatedBlob, yearbookResult);
-      downloadBlob(diary.blob, diaryName);
+      if (shouldDownloadDiaryLocal()) downloadBlob(diary.blob, diaryName);
       const diarySave = await trySaveDiaryToOneDrive(diary.blob, diaryName, registrationIdForYearbook, vehicleNameForFile);
       const maintenance = await savePreparedMaintenanceRecord(maintenancePrepared, registrationIdForYearbook, vehicleNameForFile);
       const combinedMsg = diarySave.message + maintenance.message;
@@ -2466,7 +2511,7 @@ async function downloadWorkbook() {
       const statusKind = combinedMsg.includes("失敗") ? "warn" : "ok";
       setStatus(`ZIPを作成しました。P5開始値：${yearbookResult.previousHours}時間 / P5:P19差分：${Math.round(dayHours*100)/100}時間 / ${yearbookResult.message}${combinedMsg}`, statusKind);
     } else {
-      downloadBlob(diary.blob, diaryName);
+      if (shouldDownloadDiaryLocal()) downloadBlob(diary.blob, diaryName);
       const diarySave = await trySaveDiaryToOneDrive(diary.blob, diaryName, registrationIdForYearbook, vehicleNameForFile);
       const maintenance = await savePreparedMaintenanceRecord(maintenancePrepared, registrationIdForYearbook, vehicleNameForFile);
       const combinedMsg = diarySave.message + maintenance.message;
@@ -2564,6 +2609,9 @@ if ($("useOneDriveYearbook")) $("useOneDriveYearbook").addEventListener("change"
 if ($("saveDiaryToOneDrive")) $("saveDiaryToOneDrive").addEventListener("change", saveOneDriveUiSettings);
 if ($("createMaintenanceRecord")) $("createMaintenanceRecord").addEventListener("change", saveOneDriveUiSettings);
 if ($("downloadMaintenanceRecord")) $("downloadMaintenanceRecord").addEventListener("change", saveOneDriveUiSettings);
+if ($("downloadDiaryLocal")) $("downloadDiaryLocal").addEventListener("change", saveOneDriveUiSettings);
+if ($("pilotName")) $("pilotName").addEventListener("change", () => savePilotName($("pilotName").value));
 ["initialMaintenancePlacePreset","initialMaintenancePlaceCustom","maintenanceEngineerOverride","maintenanceRemarks"].forEach(id => { if ($(id)) $(id).addEventListener("change", saveOneDriveUiSettings); });
 loadOneDriveUiSettings();
+populatePilotNameList();
 initFlightSummaryOptions();
