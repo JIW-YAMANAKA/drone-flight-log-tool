@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v34-pilot-autocomplete-optional-download-20260712";
+const APP_BUILD_VERSION = "v35-registration-autofill-fix-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -1084,6 +1084,8 @@ async function loginMicrosoft() {
     msalAccount = result.account;
     app.setActiveAccount(msalAccount);
     setOneDriveStatus(`ログインしました：${msalAccount?.username || "Microsoftアカウント"}`, "ok");
+    // 既にCSVを読み込み・機体選択済みなら、ログイン直後に登録記号を自動取得する。
+    autoFillRegistrationFromYearbook(true);
   } catch (e) {
     console.error(e);
     setOneDriveStatus("Microsoftログインに失敗しました: " + e.message, "err");
@@ -1947,13 +1949,29 @@ async function getYearbookBlobForLookup() {
   }
   return yearbookLookupBlobPromise;
 }
+// サインイン済みか（キャッシュ済みアカウント＋サイレントでトークンが取れるか）を、
+// ポップアップを一切出さずに判定する。前回セッションのログインが残っている場合もここで拾う。
+async function hasCachedGraphAccountSilent() {
+  try {
+    const app = await ensureMsalApp();
+    const account = msalAccount || app.getActiveAccount() || app.getAllAccounts()[0] || null;
+    if (!account) return false;
+    msalAccount = account;
+    app.setActiveAccount(account);
+    // サイレントで取れる時だけ true。取れない場合はポップアップを出さずスキップする。
+    await app.acquireTokenSilent({ scopes: GRAPH_SCOPES, account });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 // CSV読込・機体選択の時点で、SharePointの年度ブックから登録記号を先に埋める。
-// ログイン前はサインインポップアップを出さずスキップ（接続テスト/作成時に従来通り取得される）。
+// サイレントでトークンが取れる時だけ実行し、サインインポップアップは出さない。
 async function autoFillRegistrationFromYearbook(force = false) {
   try {
     if (!shouldUseOneDriveYearbook()) return;
-    if (!msalAccount) return;
     if (!getSelectedVehicleName()) return;
+    if (!(await hasCachedGraphAccountSilent())) return;
     const blob = await getYearbookBlobForLookup();
     await syncRegistrationFromYearbookSource(blob, force);
   } catch (e) {
