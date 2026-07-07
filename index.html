@@ -53,11 +53,6 @@
         <button id="oneDriveTestBtn" type="button" class="secondary">接続テスト</button>
       </div>
 
-      <label class="inline-check">
-        <input id="saveDiaryToOneDrive" type="checkbox" checked />
-        <span>作成した飛行日誌をSharePointにも保存する（ダウンロードも残す）</span>
-      </label>
-
       <div id="oneDriveStatus" class="status">未接続です。Microsoftアカウントでログインしてください。</div>
       <details>
         <summary>SharePoint連携の注意</summary>
@@ -77,27 +72,22 @@
         <div>
           <label for="csvFile">飛行履歴CSV（複数・追加読込対応）</label>
           <input id="csvFile" type="file" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" />
-          <div class="hint">同じファイル名でも追加読込できます。重複フライトは <code>Vehicle Name + Flight ID + Takeoff Time + Land Time</code> 等で除外します。</div>
-          <div id="csvCacheStatus" class="small-note">CSVキャッシュ：未読込</div>
-          <div class="hint">必要な列：<code>Vehicle Name</code> <code>Flight ID</code> <code>Takeoff Time</code> <code>Takeoff Latitude</code> <code>Takeoff Longitude</code> <code>Land Time</code> <code>Land Latitude</code> <code>Land Longitude</code></div>
         </div>
 
         <div class="input-grid">
           <div>
             <label for="targetDate">転記対象日</label>
             <select id="targetDate" disabled><option value="">CSV読込後に選択</option></select>
-            <div class="hint">Takeoff Timeに+9時間した日付で抽出します。</div>
           </div>
           <div>
             <label for="vehicleNameSelect">Vehicle Name</label>
             <select id="vehicleNameSelect" disabled><option value="">CSV読込後に自動表示</option></select>
-            <div class="hint">選択したVehicle Nameのフライトだけを転記し、登録記号を自動入力します。複数ある場合はここで選択してください。</div>
           </div>
           <div>
             <label for="registrationId">無人航空機の登録記号</label>
             <input id="registrationId" type="text" placeholder="例：JUxxxxxxxx" />
             <select id="registrationCandidateSelect" class="hide" style="margin-top:8px"></select>
-            <div id="registrationMatchHint" class="hint">CSVのVehicle Nameを年度管理E列で完全一致検索し、該当行のC列を登録記号として取得します。</div>
+            <div id="registrationMatchHint" class="hint"></div>
           </div>
           <div>
             <label for="pilotName">操縦者名</label>
@@ -118,24 +108,23 @@
                   <div id="extraSpecificFlights" class="checkgrid hide"></div>
                   <div class="small-note">Excel出力時は短縮表記にします。例：特定：DID、目視外、30m未満</div>
                 </div>
+                <div class="span4">
+                  <div class="actions" style="margin-top:0">
+                    <button id="addSafetyBtn" type="button" class="ghost">安全事項を追加</button>
+                    <button id="addReportBtn" type="button" class="ghost">記事を追加</button>
+                  </div>
+                  <div id="safetyWrap" class="hide">
+                    <div class="hint">安全事項は必要な場合だけ追加します。1ページ目は6〜19行目、2ページ目以降は5〜19行目から選択できます。</div>
+                    <div id="safetyEntries"></div>
+                  </div>
+                  <div id="reportWrap" class="hide">
+                    <div class="hint">記事は最大5件/ページまで。発生年月日は選択した飛行日と同じ日付を自動転記します。</div>
+                    <div id="reportEntries"></div>
+                  </div>
+                </div>
               </div>
             </details>
           </div>
-
-          <div class="span4 optional">
-            <div class="actions" style="margin-top:0">
-              <button id="addSafetyBtn" type="button" class="ghost">安全事項を追加</button>
-              <button id="addReportBtn" type="button" class="ghost">記事を追加</button>
-            </div>
-            <div id="safetyWrap" class="hide">
-              <div class="hint">安全事項は必要な場合だけ追加します。1ページ目は6〜19行目、2ページ目以降は5〜19行目から選択できます。</div>
-              <div id="safetyEntries"></div>
-            </div>
-            <div id="reportWrap" class="hide">
-              <div class="hint">記事は最大5件/ページまで。発生年月日は選択した飛行日と同じ日付を自動転記します。</div>
-              <div id="reportEntries"></div>
-            </div>
-
 
           <div class="span4 optional">
             <details id="inspectionDetails">
@@ -197,16 +186,16 @@
               <div class="small-note">初回点検は未記録の場合のみ作成します。20時間ごとの定期点検は、対象日の開始時点で20時間ラインを超えており、かつ未記録の場合に最新の1件だけ作成します。定期点検の実施場所は「現地」です。</div>
             </details>
           </div>
-          </div>
         </div>
       </div>
 
       <div class="actions">
         <button id="readBtn" type="button">CSVを追加読み込み</button>
         <button id="clearCsvBtn" type="button" class="ghost">CSVキャッシュをクリア</button>
-        <button id="downloadBtn" class="secondary" type="button" disabled>Excelを作成してダウンロード</button>
       </div>
-      <div id="status" class="status">CSVを選択して「CSVを追加読み込み」を押してください。</div>
+
+      <h3 style="margin:18px 0 8px;font-size:16px">読み込み結果</h3>
+      <div id="preview" class="table-wrap"><table><tbody><tr><td>まだ読み込んでいません。</td></tr></tbody></table></div>
 
       <details>
         <summary>転記ルールを表示</summary>
@@ -229,12 +218,16 @@
     </section>
 
     <section class="card mt">
-      <h2>STEP 3｜読み込み結果を確認</h2>
-      <div id="preview" class="table-wrap"><table><tbody><tr><td>まだ読み込んでいません。</td></tr></tbody></table></div>
+      <h2>STEP 3｜Excelを作成してダウンロード</h2>
+      <p class="mini" style="margin:-4px 0 12px">内容を確認できたら飛行日誌を作成します。SharePointへ保存し、手元にもダウンロードします。</p>
+      <div class="actions" style="margin-top:0">
+        <button id="downloadBtn" class="secondary" type="button" disabled>Excelを作成してダウンロード</button>
+      </div>
+      <div id="status" class="status">CSVを選択して「CSVを追加読み込み」を押してください。</div>
     </section>
   </div>
 
-  <script src="js/app.js?v=v28-ui-cleanup-20260712"></script>
+  <script src="js/app.js?v=v31-step-reorder-20260712"></script>
 
 </body>
 </html>

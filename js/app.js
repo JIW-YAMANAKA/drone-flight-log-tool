@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v28-ui-cleanup-20260712";
+const APP_BUILD_VERSION = "v31-step-reorder-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -1555,7 +1555,8 @@ function getDiaryOutputFolderPath() {
   return ($("oneDriveOutputFolderPath")?.value || "").trim() || DEFAULT_OUTPUT_FOLDER_PATH;
 }
 function shouldSaveDiaryToOneDrive() {
-  return Boolean($("saveDiaryToOneDrive")?.checked && DEFAULT_MS_CLIENT_ID);
+  // 飛行日誌は常にSharePointへ保存する（チェックボックスは廃止）。ダウンロードも残す。
+  return Boolean(DEFAULT_MS_CLIENT_ID);
 }
 function sanitizeFileNamePart(value, fallback = "unknown") {
   let s = String(value || "").trim();
