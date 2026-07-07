@@ -37,6 +37,9 @@
     .csv-no{color:var(--accent);font-weight:800;min-width:32px}
     .csv-name{flex:1;word-break:break-all}
     .csv-detail{color:var(--muted);font-size:12px;white-space:nowrap}
+    .card.locked{opacity:.55;pointer-events:none}
+    .lock-note{display:none;margin:0 0 12px;padding:10px 12px;border-radius:12px;background:#fffaeb;color:var(--warn);font-weight:700;font-size:13px}
+    .card.locked .lock-note{display:block}
     @media(max-width:900px){.checkgrid{grid-template-columns:1fr}}
   </style>
 </head>
@@ -74,14 +77,15 @@
       </details>
     </section>
 
-    <section class="card mt">
+    <section id="step2" class="card mt locked">
+      <div class="lock-note">🔒 STEP 1（Microsoftログイン）を完了すると入力できます。</div>
       <h2>STEP 2｜CSVを読み込み、内容を入力</h2>
       <div class="wide-grid">
         <div>
           <label for="csvFile">飛行履歴CSV（複数選択OK・追加読込対応）</label>
           <input id="csvFile" type="file" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" />
           <div class="hint">Ctrlキーを押しながら選ぶと複数を一度に選択できます。あとから追加読み込みもできます。</div>
-          <div id="csvLoadedList" class="csv-loaded empty">まだ読み込んでいません。CSVを選んで「CSVを追加読み込み」を押してください。</div>
+          <div id="csvLoadedList" class="csv-loaded empty">まだ読み込んでいません。上の「飛行履歴CSV」からファイルを選ぶと自動で読み込みます。</div>
         </div>
 
         <div class="input-grid">
@@ -201,7 +205,6 @@
       </div>
 
       <div class="actions">
-        <button id="readBtn" type="button">CSVを追加読み込み</button>
         <button id="clearCsvBtn" type="button" class="ghost">CSVキャッシュをクリア</button>
       </div>
 
@@ -228,7 +231,8 @@
       </details>
     </section>
 
-    <section class="card mt">
+    <section id="step3" class="card mt locked">
+      <div class="lock-note">🔒 STEP 1（Microsoftログイン）を完了すると使えます。</div>
       <h2>STEP 3｜飛行日誌を作成</h2>
       <p class="mini" style="margin:-4px 0 12px">飛行日誌を作成し、SharePointへ自動保存します（年度管理ブックも自動更新）。手元へのダウンロードは任意です。</p>
       <label class="inline-check" style="margin-top:0">
@@ -238,11 +242,11 @@
       <div class="actions">
         <button id="downloadBtn" class="secondary" type="button" disabled>飛行日誌を作成</button>
       </div>
-      <div id="status" class="status">CSVを選択して「CSVを追加読み込み」を押してください。</div>
+      <div id="status" class="status">CSVを選択すると自動で読み込みます。</div>
     </section>
   </div>
 
-  <script src="js/app.js?v=v35-registration-autofill-fix-20260712"></script>
+  <script src="js/app.js?v=v39-remove-readbtn-20260712"></script>
 
 </body>
 </html>

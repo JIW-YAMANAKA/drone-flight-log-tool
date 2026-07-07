@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v35-registration-autofill-fix-20260712";
+const APP_BUILD_VERSION = "v39-remove-readbtn-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -1028,17 +1028,17 @@ function loadScriptWithTimeout(src, timeoutMs = 9000) {
     }
   });
 }
-async function ensureMsalLoaded() {
+async function ensureMsalLoaded(silent = false) {
   if (typeof msal !== "undefined") return;
   if (msalLoadPromise) return msalLoadPromise;
   msalLoadPromise = (async () => {
     const errors = [];
     for (const url of MSAL_SCRIPT_URLS) {
       try {
-        setOneDriveStatus(`MSAL.jsを読み込み中: ${url}`, "warn");
+        if (!silent) setOneDriveStatus(`MSAL.jsを読み込み中: ${url}`, "warn");
         await loadScriptWithTimeout(url);
         if (typeof msal !== "undefined") {
-          setOneDriveStatus(`MSAL.jsを読み込みました: ${url}`, "ok");
+          if (!silent) setOneDriveStatus(`MSAL.jsを読み込みました: ${url}`, "ok");
           return;
         }
         errors.push(`${url}: 読み込み後もmsalが見つかりません`);
@@ -1048,14 +1048,16 @@ async function ensureMsalLoaded() {
     }
     throw new Error("MSAL.jsを読み込めませんでした。社内ネットワークで外部CDNがブロックされている可能性があります。同じフォルダに msal-browser.min.js を置くか、別回線で再試行してください。詳細: " + errors.join(" / "));
   })();
+  // 読み込み失敗時はキャッシュをリセットし、後続の明示ログインで再試行できるようにする。
+  msalLoadPromise.catch(() => { msalLoadPromise = null; });
   return msalLoadPromise;
 }
 
 function makeMsalConfigKey() {
   return `${DEFAULT_MS_CLIENT_ID}|${getOneDriveTenant()}|${location.origin}${location.pathname}`;
 }
-async function ensureMsalApp() {
-  await ensureMsalLoaded();
+async function ensureMsalApp(silent = false) {
+  await ensureMsalLoaded(silent);
   const clientId = DEFAULT_MS_CLIENT_ID;
   if (!clientId) throw new Error("Microsoft認証のClient IDが設定されていません。");
   const key = makeMsalConfigKey();
@@ -1084,6 +1086,7 @@ async function loginMicrosoft() {
     msalAccount = result.account;
     app.setActiveAccount(msalAccount);
     setOneDriveStatus(`ログインしました：${msalAccount?.username || "Microsoftアカウント"}`, "ok");
+    setStepsUnlocked(true);
     // 既にCSVを読み込み・機体選択済みなら、ログイン直後に登録記号を自動取得する。
     autoFillRegistrationFromYearbook(true);
   } catch (e) {
@@ -1097,6 +1100,7 @@ async function logoutMicrosoft() {
     const account = msalAccount || app.getActiveAccount() || app.getAllAccounts()[0];
     if (account) await app.logoutPopup({ account });
     msalAccount = null;
+    setStepsUnlocked(false);
     setOneDriveStatus("ログアウトしました。", "ok");
   } catch (e) {
     console.error(e);
@@ -1112,6 +1116,7 @@ async function acquireGraphToken() {
     msalAccount = account;
     app.setActiveAccount(account);
   }
+  setStepsUnlocked(true);
   try {
     const token = await app.acquireTokenSilent({ scopes: GRAPH_SCOPES, account });
     return token.accessToken;
@@ -1921,7 +1926,7 @@ function applyRegistrationCandidates(candidates, vehicleName, force = true) {
   const setInput = (reg) => { if (force || !input.value.trim()) input.value = reg; };
   if (candidates.length === 1) {
     setInput(candidates[0].registrationId);
-    if (hint) hint.textContent = `年度管理E列で完全一致：${vehicleName} → C列 ${candidates[0].registrationId}（${candidates[0].sheetName}!${candidates[0].rowNum}行目）`;
+    if (hint) hint.textContent = "";
     return;
   }
   select.classList.remove("hide");
@@ -1953,7 +1958,7 @@ async function getYearbookBlobForLookup() {
 // ポップアップを一切出さずに判定する。前回セッションのログインが残っている場合もここで拾う。
 async function hasCachedGraphAccountSilent() {
   try {
-    const app = await ensureMsalApp();
+    const app = await ensureMsalApp(true);
     const account = msalAccount || app.getActiveAccount() || app.getAllAccounts()[0] || null;
     if (!account) return false;
     msalAccount = account;
@@ -2279,7 +2284,7 @@ function updateCsvLoadedList() {
   if (!el) return;
   if (!csvImportFiles.length) {
     el.className = "csv-loaded empty";
-    el.textContent = "まだ読み込んでいません。CSVを選んで「CSVを追加読み込み」を押してください。";
+    el.textContent = "まだ読み込んでいません。上の「飛行履歴CSV」からファイルを選ぶと自動で読み込みます。";
     return;
   }
   el.className = "csv-loaded";
@@ -2608,7 +2613,13 @@ function getReportEntries() {
   return [...document.querySelectorAll("#reportEntries .entry")].map(div => ({ page:Number(div.querySelector(".report-page").value), squawk:div.querySelector(".report-squawk").value.trim(), actionDate:div.querySelector(".report-action-date").value, action:div.querySelector(".report-action").value.trim(), confirmer:div.querySelector(".report-confirmer").value.trim() })).filter(e => e.squawk || e.actionDate || e.action || e.confirmer);
 }
 
-$("readBtn").addEventListener("click", readSelectedCsv);
+function setStepsUnlocked(unlocked) {
+  ["step2", "step3"].forEach(id => {
+    const el = $(id);
+    if (el) el.classList.toggle("locked", !unlocked);
+  });
+}
+
 $("clearCsvBtn").addEventListener("click", clearCsvCache);
 $("downloadBtn").addEventListener("click", downloadWorkbook);
 $("csvFile").addEventListener("change", readSelectedCsv);
@@ -2633,3 +2644,5 @@ if ($("pilotName")) $("pilotName").addEventListener("change", () => savePilotNam
 loadOneDriveUiSettings();
 populatePilotNameList();
 initFlightSummaryOptions();
+// 前回セッションのログインが残っていれば、起動時にSTEP2・3を自動解除する。
+hasCachedGraphAccountSilent().then(ok => { if (ok) { setStepsUnlocked(true); autoFillRegistrationFromYearbook(false); } });
