@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v39-remove-readbtn-20260712";
+const APP_BUILD_VERSION = "v40-show-logged-in-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -2644,5 +2644,11 @@ if ($("pilotName")) $("pilotName").addEventListener("change", () => savePilotNam
 loadOneDriveUiSettings();
 populatePilotNameList();
 initFlightSummaryOptions();
-// 前回セッションのログインが残っていれば、起動時にSTEP2・3を自動解除する。
-hasCachedGraphAccountSilent().then(ok => { if (ok) { setStepsUnlocked(true); autoFillRegistrationFromYearbook(false); } });
+// 前回セッションのログインが残っていれば、起動時にSTEP2・3を自動解除し、
+// STEP1の表示も「ログイン済み」に更新して「未接続」表示との矛盾を解消する。
+hasCachedGraphAccountSilent().then(ok => {
+  if (!ok) return;
+  setStepsUnlocked(true);
+  setOneDriveStatus(`ログイン済み：${msalAccount?.username || "Microsoftアカウント"}`, "ok");
+  autoFillRegistrationFromYearbook(false);
+});
