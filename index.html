@@ -37,6 +37,10 @@
     .csv-no{color:var(--accent);font-weight:800;min-width:32px}
     .csv-name{flex:1;word-break:break-all}
     .csv-detail{color:var(--muted);font-size:12px;white-space:nowrap}
+    .spinner{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spin .8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .linkbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none;border-radius:14px;background:#eef4ff;color:#1849a9;font-weight:800;padding:11px 16px;border:1px solid #cdddff}
+    .linkbtn:hover{background:#e0ecff}
     .card.locked{opacity:.55;pointer-events:none}
     .lock-note{display:none;margin:0 0 12px;padding:10px 12px;border-radius:12px;background:#fffaeb;color:var(--warn);font-weight:700;font-size:13px}
     .card.locked .lock-note{display:block}
@@ -53,7 +57,10 @@
 
     <section class="card">
       <h2>STEP 1｜Microsoftにログイン</h2>
-      <p class="mini" style="margin:-4px 0 12px">まず会社アカウントでログインします。飛行日誌はSharePointの共有フォルダに保存されます。</p>
+      <p class="mini" style="margin:-4px 0 10px">まず会社アカウントでログインします。飛行日誌はSharePointの共有フォルダに保存されます。</p>
+      <div style="margin:0 0 14px">
+        <a class="linkbtn" href="https://japaninfrastructurewaymark.sharepoint.com/:f:/s/hiko-kiroku/IgBiiqwIBYDFRq9MY1u9cO2GAbJsLrEpIisD-3lG8SSzm2M?e=4haI9e" target="_blank" rel="noopener">📁 SharePointの共有フォルダを開く</a>
+      </div>
       <input id="msClientId" type="hidden" value="0cac3fec-2429-4ac8-afdc-0a8072962de2" />
       <input id="msTenant" type="hidden" value="de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb" />
       <input id="useOneDriveYearbook" type="checkbox" checked class="hide" aria-hidden="true" />
@@ -61,7 +68,6 @@
       <div class="actions" style="margin-top:0">
         <button id="msLoginBtn" type="button">Microsoftアカウントでログイン</button>
         <button id="msLogoutBtn" type="button" class="ghost">ログアウト</button>
-        <button id="oneDriveTestBtn" type="button" class="secondary">接続テスト</button>
       </div>
 
       <div id="oneDriveStatus" class="status">未接続です。Microsoftアカウントでログインしてください。</div>
@@ -70,7 +76,6 @@
         <ul>
           <li>年度管理ブックと保存先フォルダは、アプリ内の固定設定を使います。</li>
           <li><code>年度管理/2026_飛行時間.xlsx</code> を読み書きし、<code>出力/機体登録番号_Vehicle Name</code> に保存します。</li>
-          <li>接続テストはCSV読込前でも実行できます。CSV読込後は機体照合と書込予定セルまで確認します。</li>
           <li>初めて使うメンバーは、SharePointサイト「飛行記録」のメンバーに追加されている必要があります。</li>
           <li>Microsoftログインを使うため、公開URL（<code>https://</code>）で開いてください。</li>
         </ul>
@@ -242,11 +247,11 @@
       <div class="actions">
         <button id="downloadBtn" class="secondary" type="button" disabled>飛行日誌を作成</button>
       </div>
-      <div id="status" class="status">CSVを選択すると自動で読み込みます。</div>
+      <div id="status" class="status">内容を確認したら「飛行日誌を作成」を押してください。</div>
     </section>
   </div>
 
-  <script src="js/app.js?v=v41-local-label-20260712"></script>
+  <script src="js/app.js?v=v44-progress-indicator-20260712"></script>
 
 </body>
 </html>

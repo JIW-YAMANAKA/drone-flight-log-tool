@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v41-local-label-20260712";
+const APP_BUILD_VERSION = "v44-progress-indicator-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -101,10 +101,14 @@ const specificFlights = [
   { label:"総重量25kg以上", short:"25kg以上", default:false, basic:false }
 ];
 
-function setStatus(message, kind = "") {
+function setStatus(message, kind = "", busy = false) {
   const el = $("status");
   el.className = "status" + (kind ? " " + kind : "");
-  el.textContent = message;
+  if (busy) {
+    el.innerHTML = '<span class="spinner" aria-hidden="true"></span>' + escHtml(message);
+  } else {
+    el.textContent = message;
+  }
 }
 function escHtml(s) { return String(s ?? "").replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
 function b64ToArrayBuffer(base64) {
@@ -761,9 +765,11 @@ async function reverseGeocode(lat, lon) {
   const wait = Math.max(0, 1100 - (Date.now() - geocodeLastAt));
   if (wait) await sleep(wait);
   geocodeLastAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&zoom=18&addressdetails=1&accept-language=ja`;
-    const res = await fetch(url, { headers: { "Accept":"application/json" } });
+    const res = await fetch(url, { headers: { "Accept":"application/json" }, signal: controller.signal });
     if (!res.ok) throw new Error("geocode failed");
     const data = await res.json();
     const a = data.address || {};
@@ -775,13 +781,19 @@ async function reverseGeocode(lat, lon) {
   } catch (e) {
     const fallback = coordFallback(lat, lon);
     geocodeCache.set(key, fallback); return fallback;
+  } finally {
+    clearTimeout(timer);
   }
 }
 async function enrichLocations(rows) {
-  setStatus("緯度経度から地名を取得しています...", "warn");
+  const total = rows.length * 2;
+  let done = 0;
+  setStatus(`緯度経度から地名を取得しています... (0/${total})`, "warn", true);
   for (const row of rows) {
     row._takeoffPlace = await reverseGeocode(row["Takeoff Latitude"], row["Takeoff Longitude"]);
+    done++; setStatus(`緯度経度から地名を取得しています... (${done}/${total})`, "warn", true);
     row._landPlace = await reverseGeocode(row["Land Latitude"], row["Land Longitude"]);
+    done++; setStatus(`緯度経度から地名を取得しています... (${done}/${total})`, "warn", true);
   }
 }
 
@@ -1980,7 +1992,7 @@ async function autoFillRegistrationFromYearbook(force = false) {
     const blob = await getYearbookBlobForLookup();
     await syncRegistrationFromYearbookSource(blob, force);
   } catch (e) {
-    console.warn("登録記号の自動取得をスキップしました（接続テスト/作成時に再取得します）", e);
+    console.warn("登録記号の自動取得をスキップしました（飛行日誌の作成時に再取得します）", e);
   }
 }
 
@@ -2468,9 +2480,13 @@ async function downloadWorkbook() {
   const selectedDate = $("targetDate").value;
   const selectedRows = getSelectedRows();
   if (!selectedDate || !selectedRows.length) { setStatus("転記対象日を選択してください。", "warn"); return; }
-  $("downloadBtn").disabled = true;
+  const downloadBtn = $("downloadBtn");
+  const downloadBtnLabel = downloadBtn.textContent;
+  downloadBtn.disabled = true;
+  downloadBtn.textContent = "作成中…";
   try {
     savePilotName($("pilotName").value);
+    setStatus("飛行日誌を作成しています...", "warn", true);
     await enrichLocations(selectedRows);
 
     // 年度管理ブックはSharePoint固定の1冊を使う。手動アップロードは廃止した。
@@ -2480,7 +2496,7 @@ async function downloadWorkbook() {
 
     if (shouldUseOneDriveYearbook()) {
       try {
-        setStatus("OneDrive年度管理ブックを取得中...", "");
+        setStatus("SharePointの年度管理ブックを取得中...", "warn", true);
         yearbookSource = await downloadYearbookFromOneDrive();
         usingOneDrive = true;
       } catch (e) {
@@ -2513,7 +2529,7 @@ async function downloadWorkbook() {
     const diaryName = buildDiaryOutputFileName(selectedDate, registrationIdForYearbook, vehicleNameForFile);
 
     if (usingOneDrive && yearbookResult.updatedBlob) {
-      setStatus("OneDrive年度管理ブックの対象セルを更新中...", "");
+      setStatus("SharePointの年度管理ブックを更新し、飛行日誌を保存中...", "warn", true);
       await uploadYearbookToOneDrive(yearbookResult.updatedBlob, yearbookResult);
       if (shouldDownloadDiaryLocal()) downloadBlob(diary.blob, diaryName);
       const diarySave = await trySaveDiaryToOneDrive(diary.blob, diaryName, registrationIdForYearbook, vehicleNameForFile);
@@ -2546,11 +2562,13 @@ async function downloadWorkbook() {
     const msg = String(e.message || e);
     if (msg.includes("Graph API 423") || msg.includes("resourceLocked")) {
       setStatus("Excel作成または年度管理更新に失敗しました: 年度管理ブックまたは保存先ファイルがロック中です。Excel/ブラウザ/スマホで開いている場合は閉じて、1〜3分待ってから再実行してください。詳細: " + msg, "err");
+    } else if (e.name === "TypeError" || /Failed to fetch|NetworkError|network|ERR_INTERNET/i.test(msg)) {
+      setStatus("ネットワークに接続できませんでした。通信環境を確認して、もう一度お試しください。（作成した内容は保存されていません）詳細: " + msg, "err");
     } else {
       setStatus("Excel作成に失敗しました: " + msg, "err");
     }
   }
-  finally { outputStyleMap = null; outputRedBoldStyleMap = null; $("downloadBtn").disabled = false; }
+  finally { outputStyleMap = null; outputRedBoldStyleMap = null; downloadBtn.disabled = false; downloadBtn.textContent = downloadBtnLabel; }
 }
 
 function initFlightSummaryOptions() {
@@ -2633,7 +2651,6 @@ $("toggleSpecificBtn").addEventListener("click", toggleSpecificFlights);
 if ($("saveOneDriveSettingsBtn")) $("saveOneDriveSettingsBtn").addEventListener("click", saveOneDriveUiSettings);
 if ($("msLoginBtn")) $("msLoginBtn").addEventListener("click", loginMicrosoft);
 if ($("msLogoutBtn")) $("msLogoutBtn").addEventListener("click", logoutMicrosoft);
-if ($("oneDriveTestBtn")) $("oneDriveTestBtn").addEventListener("click", testOneDriveYearbook);
 if ($("useOneDriveYearbook")) $("useOneDriveYearbook").addEventListener("change", saveOneDriveUiSettings);
 if ($("saveDiaryToOneDrive")) $("saveDiaryToOneDrive").addEventListener("change", saveOneDriveUiSettings);
 if ($("createMaintenanceRecord")) $("createMaintenanceRecord").addEventListener("change", saveOneDriveUiSettings);
