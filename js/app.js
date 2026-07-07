@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v44-progress-indicator-20260712";
+const APP_BUILD_VERSION = "v45-cleanup-deadcode-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -927,9 +927,6 @@ function setOneDriveStatus(message, kind = "") {
   el.textContent = message;
 }
 function loadOneDriveUiSettings() {
-  if ($('msClientId')) $('msClientId').value = DEFAULT_MS_CLIENT_ID;
-  if ($('msTenant')) $('msTenant').value = DEFAULT_MS_TENANT_ID;
-
   // 旧UI項目は廃止。過去に保存された値も使わない。
   [
     OD_KEYS.clientId,
@@ -945,7 +942,6 @@ function loadOneDriveUiSettings() {
     OD_KEYS.use
   ].forEach(k => localStorage.removeItem(k));
 
-  if ($('useOneDriveYearbook')) $('useOneDriveYearbook').checked = true;
   if ($('saveDiaryToOneDrive')) {
     const savedSaveDiary = localStorage.getItem(OD_KEYS.saveDiary);
     $('saveDiaryToOneDrive').checked = savedSaveDiary == null ? true : savedSaveDiary === '1';
@@ -988,15 +984,6 @@ function getOneDriveRootFolderPath() {
 }
 function getOneDrivePath() {
   return DEFAULT_YEARBOOK_PATH;
-}
-function getOneDriveShareUrl() {
-  return '';
-}
-function getOneDriveYearbookDirectIds() {
-  return null;
-}
-function setOneDriveYearbookDirectIds(_driveId, _itemId) {
-  // 旧方式は廃止
 }
 function getYearbookLocationLabel() {
   return `固定ルート/${DEFAULT_YEARBOOK_RELATIVE_PATH}`;
@@ -1573,12 +1560,6 @@ async function uploadYearbookToOneDrive(blob, yearbookResult = null) {
 function shouldUseOneDriveYearbook() {
   return Boolean(DEFAULT_MS_CLIENT_ID);
 }
-function getDiaryOutputFolderShareUrl() {
-  return ($("oneDriveOutputFolderShareUrl")?.value || "").trim();
-}
-function getDiaryOutputFolderPath() {
-  return ($("oneDriveOutputFolderPath")?.value || "").trim() || DEFAULT_OUTPUT_FOLDER_PATH;
-}
 function shouldSaveDiaryToOneDrive() {
   // 飛行日誌は常にSharePointへ保存する（チェックボックスは廃止）。ダウンロードも残す。
   return Boolean(DEFAULT_MS_CLIENT_ID);
@@ -1959,7 +1940,6 @@ async function syncRegistrationFromYearbookSource(yearbookSource, force = true) 
 // 登録記号の自動取得用に、年度管理ブックをセッション中1回だけ取得してキャッシュする。
 // C列/E列（登録記号・Vehicle Name）は書き込みで変わらないため、キャッシュを使い回す。
 let yearbookLookupBlobPromise = null;
-function invalidateYearbookLookupCache() { yearbookLookupBlobPromise = null; }
 async function getYearbookBlobForLookup() {
   if (!yearbookLookupBlobPromise) {
     yearbookLookupBlobPromise = downloadYearbookFromOneDrive().catch(e => { yearbookLookupBlobPromise = null; throw e; });
@@ -1996,60 +1976,6 @@ async function autoFillRegistrationFromYearbook(force = false) {
   }
 }
 
-async function fetchYearbookItemByPersonalPath() {
-  const url = `${GRAPH_ROOT}/me/drive/root:/${encodeOneDrivePath(getOneDrivePath())}:?$select=id,name,parentReference,webUrl,file`;
-  const item = await graphFetchJson(url, { method: "GET" });
-  const driveId = item?.parentReference?.driveId;
-  const itemId = item?.id;
-  if (!driveId || !itemId) throw new Error("個人用パスから年度管理ブックのDrive ID / Item IDを取得できませんでした。");
-  return { driveId, itemId, name: item.name || "" };
-}
-
-async function captureYearbookDirectIds() {
-  try {
-    setOneDriveStatus("年度管理ブックのDrive ID / Item IDを取得中...", "");
-    const item = await fetchYearbookItemByPersonalPath();
-    setOneDriveYearbookDirectIds(item.driveId, item.itemId);
-    saveOneDriveUiSettings();
-    setOneDriveStatus(`年度管理IDを取得しました：${item.name || "年度管理ブック"} / Drive ID=${item.driveId} / Item ID=${item.itemId}。以後は共有リンクよりこのIDを優先します。`, "ok");
-  } catch (e) {
-    console.error(e);
-    setOneDriveStatus("年度管理ID取得に失敗しました: " + e.message, "err");
-  }
-}
-
-async function testOneDriveYearbook() {
-  const selectedDate = $("targetDate")?.value || "";
-  try {
-    setOneDriveStatus("OneDrive接続を確認中...", "");
-
-    const root = await resolveRootFolderDriveItem();
-    const yearbookItem = await resolveYearbookItemByRootFolder();
-    const outputFolder = await resolveOutputBaseFolderByRootFolder();
-    const blob = await downloadYearbookFromOneDrive();
-
-    const vehicleName = getSelectedVehicleName();
-    if (!selectedDate || !vehicleName) {
-      setOneDriveStatus(
-        `接続OK：SharePoint/OneDriveのルートフォルダ「${root.name || "ドローン飛行日誌"}」、年度管理ブック「${yearbookItem.name || "2026_飛行時間.xlsx"}」、出力フォルダ「${outputFolder.name || "出力"}」を確認しました。CSV読込後は機体照合と書込予定セルまで確認できます。`,
-        "ok"
-      );
-      return;
-    }
-
-    await syncRegistrationFromYearbookSource(blob, true);
-    const registrationId = $("registrationId").value.trim();
-    if (!registrationId) {
-      setOneDriveStatus("接続OK。ただし年度管理E列から登録記号を取得できませんでした。登録記号を手入力してください。", "warn");
-      return;
-    }
-    const info = await loadYearbook(blob, registrationId, selectedDate, null);
-    setOneDriveStatus(`接続OK：${info.message} / 書込予定セル：${info.targetAddr}`, "ok");
-  } catch (e) {
-    console.error(e);
-    setOneDriveStatus("接続テストに失敗しました: " + e.message, "err");
-  }
-}
 
 function decodeJwtPayload(token) {
   try {
@@ -2278,19 +2204,6 @@ function csvRowKey(row) {
   if (flightId) return ["id", vehicle, flightId, takeoff, land].join("|");
   return ["noid", vehicle, takeoff, land, String(row["Takeoff Latitude"] || "").trim(), String(row["Takeoff Longitude"] || "").trim(), String(row["Land Latitude"] || "").trim(), String(row["Land Longitude"] || "").trim()].join("|");
 }
-function updateCsvCacheStatus() {
-  const el = $("csvCacheStatus");
-  if (!el) return;
-  if (!parsedRows.length) {
-    el.textContent = "CSVキャッシュ：未読込";
-    return;
-  }
-  const files = csvImportFiles.length;
-  const vehicleCount = uniqueVehicleNames(parsedRows).length;
-  const dates = [...new Set(parsedRows.map(r => r._targetDate).filter(Boolean))].length;
-  const skipped = csvImportFiles.reduce((sum, f) => sum + Number(f.skipped || 0), 0);
-  el.textContent = `CSVキャッシュ：${files}回読込 / ${parsedRows.length}フライト / ${vehicleCount}機体 / ${dates}日${skipped ? ` / 重複除外 ${skipped}件` : ""}`;
-}
 function updateCsvLoadedList() {
   const el = $("csvLoadedList");
   if (!el) return;
@@ -2360,7 +2273,6 @@ function appendParsedRows(newRows, sourceName) {
 function refreshAfterCsvChange(messageKind = "ok", customMessage = "") {
   renderPreview(parsedRows);
   updateDateSelect();
-  updateCsvCacheStatus();
   updateCsvLoadedList();
   $("downloadBtn").disabled = !parsedRows.length;
   const chunks = buildPageChunks(getSelectedRows());
@@ -2379,7 +2291,6 @@ function clearCsvCache() {
   if ($("registrationId")) $("registrationId").value = "";
   if ($("registrationCandidateSelect")) { $("registrationCandidateSelect").innerHTML = ""; $("registrationCandidateSelect").classList.add("hide"); }
   renderPreview([]);
-  updateCsvCacheStatus();
   updateCsvLoadedList();
   updatePageSelects();
   $("downloadBtn").disabled = true;
@@ -2648,10 +2559,8 @@ $("addSafetyBtn").addEventListener("click", addSafetyEntry);
 $("addReportBtn").addEventListener("click", addReportEntry);
 $("toggleSpecificBtn").addEventListener("click", toggleSpecificFlights);
 
-if ($("saveOneDriveSettingsBtn")) $("saveOneDriveSettingsBtn").addEventListener("click", saveOneDriveUiSettings);
 if ($("msLoginBtn")) $("msLoginBtn").addEventListener("click", loginMicrosoft);
 if ($("msLogoutBtn")) $("msLogoutBtn").addEventListener("click", logoutMicrosoft);
-if ($("useOneDriveYearbook")) $("useOneDriveYearbook").addEventListener("change", saveOneDriveUiSettings);
 if ($("saveDiaryToOneDrive")) $("saveDiaryToOneDrive").addEventListener("change", saveOneDriveUiSettings);
 if ($("createMaintenanceRecord")) $("createMaintenanceRecord").addEventListener("change", saveOneDriveUiSettings);
 if ($("downloadMaintenanceRecord")) $("downloadMaintenanceRecord").addEventListener("change", saveOneDriveUiSettings);
