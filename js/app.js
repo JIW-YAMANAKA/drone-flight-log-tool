@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v27-fixed-id-required-20260610";
+const APP_BUILD_VERSION = "v28-ui-cleanup-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -42,7 +42,10 @@ const DEFAULT_SHAREPOINT_HOSTNAME = "japaninfrastructurewaymark.sharepoint.com";
 const DEFAULT_SHAREPOINT_SITE_PATH = "hiko-kiroku";
 const DEFAULT_SHAREPOINT_ROOT_FOLDER_CANDIDATES = [DEFAULT_ROOT_FOLDER_PATH, ""];
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
-const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
+// SharePointサイト hiko-kiroku の共有フォルダを全メンバーが読み書きするため、
+// Sites.ReadWrite.All（委任）を要求する。テナント管理者の同意が前提。
+// 委任権限なので、各利用者が本来アクセスできる範囲のSharePointファイルだけを扱う。
+const GRAPH_SCOPES = ["User.Read", "Sites.ReadWrite.All"];
 const OD_KEYS = {
   clientId: "flightLog.msClientId",
   tenant: "flightLog.msTenant",
@@ -1247,14 +1250,12 @@ function formatFixedIdSetupHint() {
 }
 function formatSharePointAccessError(detail = "") {
   return [
-    `Microsoftログインは成功しましたが、固定IDが未設定のためSharePoint site path経由の解決で停止しました。`,
-    `SharePointサイト ${DEFAULT_SHAREPOINT_SITE_PATH} のドキュメントライブラリにアクセスできません。`,
-    "可能性:",
-    `- このユーザーが ${DEFAULT_SHAREPOINT_SITE_PATH} サイトまたは対象フォルダのメンバーではない`,
-    "- アプリのスコープに必要な権限がない",
-    "- /sites/{siteId}/drive 解決に Sites.Read.All が必要なテナント設定になっている",
-    "- SHAREPOINT_DRIVE_ID / SHAREPOINT_ROOT_FOLDER_ITEM_ID が未設定",
-    formatFixedIdSetupHint(),
+    `Microsoftログインは成功しましたが、SharePointサイト ${DEFAULT_SHAREPOINT_SITE_PATH} のドキュメントライブラリにアクセスできませんでした。`,
+    "確認してください:",
+    `- Entraアプリに委任権限 Sites.ReadWrite.All が追加され、管理者の同意が付与されているか`,
+    `- このユーザーが ${DEFAULT_SHAREPOINT_SITE_PATH} サイト（または対象フォルダ）のメンバーか`,
+    "- 固定URLで開いており、そのURLがEntraのSPAリダイレクトURIに登録されているか",
+    "詳しい原因は DevTools Console で debugGraphAccess() を実行すると確認できます。",
     detail ? `詳細:\n${detail}` : ""
   ].filter(Boolean).join("\n");
 }
@@ -1929,6 +1930,30 @@ async function syncRegistrationFromYearbookSource(yearbookSource, force = true) 
   return candidates;
 }
 
+// 登録記号の自動取得用に、年度管理ブックをセッション中1回だけ取得してキャッシュする。
+// C列/E列（登録記号・Vehicle Name）は書き込みで変わらないため、キャッシュを使い回す。
+let yearbookLookupBlobPromise = null;
+function invalidateYearbookLookupCache() { yearbookLookupBlobPromise = null; }
+async function getYearbookBlobForLookup() {
+  if (!yearbookLookupBlobPromise) {
+    yearbookLookupBlobPromise = downloadYearbookFromOneDrive().catch(e => { yearbookLookupBlobPromise = null; throw e; });
+  }
+  return yearbookLookupBlobPromise;
+}
+// CSV読込・機体選択の時点で、SharePointの年度ブックから登録記号を先に埋める。
+// ログイン前はサインインポップアップを出さずスキップ（接続テスト/作成時に従来通り取得される）。
+async function autoFillRegistrationFromYearbook(force = false) {
+  try {
+    if (!shouldUseOneDriveYearbook()) return;
+    if (!msalAccount) return;
+    if (!getSelectedVehicleName()) return;
+    const blob = await getYearbookBlobForLookup();
+    await syncRegistrationFromYearbookSource(blob, force);
+  } catch (e) {
+    console.warn("登録記号の自動取得をスキップしました（接続テスト/作成時に再取得します）", e);
+  }
+}
+
 async function fetchYearbookItemByPersonalPath() {
   const url = `${GRAPH_ROOT}/me/drive/root:/${encodeOneDrivePath(getOneDrivePath())}:?$select=id,name,parentReference,webUrl,file`;
   const item = await graphFetchJson(url, { method: "GET" });
@@ -2144,7 +2169,7 @@ window.debugGraphAccess = async function debugGraphAccess() {
       driveResult = await probe("4. site default drive", `/sites/${encodeURIComponent(siteId)}/drive?$select=id,name,webUrl`);
       driveId = driveResult.ok && driveResult.body?.id ? driveResult.body.id : "";
       if (!driveResult.ok) {
-        console.warn("[debugGraphAccess] /sites/{siteId}/drive が失敗しました。Files.ReadWriteのみではsite pathからdriveIdを解決できない可能性が高いため、固定ID方式を使ってください。", driveResult);
+        console.warn("[debugGraphAccess] /sites/{siteId}/drive が失敗しました。委任権限 Sites.ReadWrite.All の管理者同意が未付与、またはこのユーザーが対象サイトのメンバーでない可能性が高いです。", driveResult);
       }
     }
 
@@ -2232,6 +2257,14 @@ function readFileAsText(file, encoding) {
     reader.readAsText(file, encoding);
   });
 }
+async function readCsvFileText(file) {
+  // 文字コードは自動判定する。まずUTF-8で読み、置換文字(U+FFFD)が出たらShift_JISで読み直す。
+  const utf8 = await readFileAsText(file, "UTF-8");
+  if (utf8.includes("�")) {
+    try { return await readFileAsText(file, "Shift_JIS"); } catch (_) { return utf8; }
+  }
+  return utf8;
+}
 function appendParsedRows(newRows, sourceName) {
   let added = 0;
   let skipped = 0;
@@ -2255,6 +2288,7 @@ function refreshAfterCsvChange(messageKind = "ok", customMessage = "") {
   const vehicleCount = uniqueVehicleNames(parsedRows).length;
   const vehicleNote = vehicleCount > 1 ? ` / Vehicle Name：${vehicleCount}種類（選択可）` : (vehicleCount === 1 ? ` / Vehicle Name：${getSelectedVehicleName()}` : "");
   setStatus(customMessage || `${parsedRows.length}件をキャッシュしています${vehicleNote}。対象日と機体を選択してExcelを作成できます。選択条件のページ数：${chunks.length || 1}枚`, messageKind);
+  autoFillRegistrationFromYearbook(false);
 }
 function clearCsvCache() {
   parsedRows = [];
@@ -2291,7 +2325,7 @@ async function readSelectedCsv() {
   const errorsAll = [];
   try {
     for (const file of files) {
-      const text = await readFileAsText(file, $("encoding").value);
+      const text = await readCsvFileText(file);
       const newRows = prepareRows(parseDelimited(text));
       const errors = validateHeaders(newRows);
       if (errors.length) {
@@ -2370,7 +2404,8 @@ async function downloadWorkbook() {
   try {
     await enrichLocations(selectedRows);
 
-    const manualYearbookFile = $("yearbookFile").files[0] || null;
+    // 年度管理ブックはSharePoint固定の1冊を使う。手動アップロードは廃止した。
+    const manualYearbookFile = null;
     let yearbookSource = manualYearbookFile;
     let usingOneDrive = false;
 
@@ -2513,8 +2548,8 @@ $("readBtn").addEventListener("click", readSelectedCsv);
 $("clearCsvBtn").addEventListener("click", clearCsvCache);
 $("downloadBtn").addEventListener("click", downloadWorkbook);
 $("csvFile").addEventListener("change", readSelectedCsv);
-$("targetDate").addEventListener("change", () => { updateVehicleNameSelect(); updatePageSelects(); const chunks = buildPageChunks(getSelectedRows()); setStatus(`転記対象日を変更しました。Vehicle Name：${getSelectedVehicleName() || "未選択"} / 選択条件の件数：${getSelectedRows().length}件 / ページ数：${chunks.length || 1}枚`, "ok"); });
-if ($("vehicleNameSelect")) $("vehicleNameSelect").addEventListener("change", () => { syncRegistrationFromVehicle(true); updatePageSelects(); const chunks = buildPageChunks(getSelectedRows()); setStatus(`Vehicle Nameを変更しました：${getSelectedVehicleName()} / 登録記号：${$("registrationId").value || "未入力"} / 件数：${getSelectedRows().length}件 / ページ数：${chunks.length || 1}枚`, "ok"); });
+$("targetDate").addEventListener("change", () => { updateVehicleNameSelect(); updatePageSelects(); const chunks = buildPageChunks(getSelectedRows()); setStatus(`転記対象日を変更しました。Vehicle Name：${getSelectedVehicleName() || "未選択"} / 選択条件の件数：${getSelectedRows().length}件 / ページ数：${chunks.length || 1}枚`, "ok"); autoFillRegistrationFromYearbook(true); });
+if ($("vehicleNameSelect")) $("vehicleNameSelect").addEventListener("change", () => { syncRegistrationFromVehicle(true); updatePageSelects(); const chunks = buildPageChunks(getSelectedRows()); setStatus(`Vehicle Nameを変更しました：${getSelectedVehicleName()} / 登録記号：${$("registrationId").value || "未入力"} / 件数：${getSelectedRows().length}件 / ページ数：${chunks.length || 1}枚`, "ok"); autoFillRegistrationFromYearbook(true); });
 if ($("registrationId")) $("registrationId").addEventListener("change", saveCurrentVehicleMapping);
 $("addSafetyBtn").addEventListener("click", addSafetyEntry);
 $("addReportBtn").addEventListener("click", addReportEntry);

@@ -41,7 +41,8 @@
 
 
     <section class="card">
-      <h2>0. OneDrive連携</h2>
+      <h2>STEP 1｜Microsoftにログイン</h2>
+      <p class="mini" style="margin:-4px 0 12px">まず会社アカウントでログインします。飛行日誌はSharePointの共有フォルダに保存されます。</p>
       <input id="msClientId" type="hidden" value="0cac3fec-2429-4ac8-afdc-0a8072962de2" />
       <input id="msTenant" type="hidden" value="de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb" />
       <input id="useOneDriveYearbook" type="checkbox" checked class="hide" aria-hidden="true" />
@@ -54,23 +55,24 @@
 
       <label class="inline-check">
         <input id="saveDiaryToOneDrive" type="checkbox" checked />
-        <span>作成した飛行日誌をOneDriveにも保存する（ダウンロードも残す）</span>
+        <span>作成した飛行日誌をSharePointにも保存する（ダウンロードも残す）</span>
       </label>
 
-      <div id="oneDriveStatus" class="status">OneDrive未接続です。Microsoftアカウントでログインしてください。</div>
+      <div id="oneDriveStatus" class="status">未接続です。Microsoftアカウントでログインしてください。</div>
       <details>
-        <summary>OneDrive連携の注意</summary>
+        <summary>SharePoint連携の注意</summary>
         <ul>
           <li>年度管理ブックと保存先フォルダは、アプリ内の固定設定を使います。</li>
           <li><code>年度管理/2026_飛行時間.xlsx</code> を読み書きし、<code>出力/機体登録番号_Vehicle Name</code> に保存します。</li>
           <li>接続テストはCSV読込前でも実行できます。CSV読込後は機体照合と書込予定セルまで確認します。</li>
-          <li>Microsoftログインを使うため、HTMLは <code>https://</code> または <code>http://localhost</code> 上で開く必要があります。</li>
+          <li>初めて使うメンバーは、SharePointサイト「飛行記録」のメンバーに追加されている必要があります。</li>
+          <li>Microsoftログインを使うため、公開URL（<code>https://</code>）で開いてください。</li>
         </ul>
       </details>
     </section>
 
     <section class="card mt">
-      <h2>1. CSV・入力項目</h2>
+      <h2>STEP 2｜CSVを読み込み、内容を入力</h2>
       <div class="wide-grid">
         <div>
           <label for="csvFile">飛行履歴CSV（複数・追加読込対応）</label>
@@ -78,15 +80,6 @@
           <div class="hint">同じファイル名でも追加読込できます。重複フライトは <code>Vehicle Name + Flight ID + Takeoff Time + Land Time</code> 等で除外します。</div>
           <div id="csvCacheStatus" class="small-note">CSVキャッシュ：未読込</div>
           <div class="hint">必要な列：<code>Vehicle Name</code> <code>Flight ID</code> <code>Takeoff Time</code> <code>Takeoff Latitude</code> <code>Takeoff Longitude</code> <code>Land Time</code> <code>Land Latitude</code> <code>Land Longitude</code></div>
-          <div style="margin-top:12px">
-            <label for="encoding">文字コード</label>
-            <select id="encoding"><option value="UTF-8">UTF-8</option><option value="Shift_JIS">Shift_JIS</option></select>
-          </div>
-          <div style="margin-top:12px">
-            <label for="yearbookFile">飛行日誌2026年度.xlsx（任意）</label>
-            <input id="yearbookFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-            <div class="hint">選択すると、登録記号に一致する行のG列「総飛行時間」をP5に転記し、選択日の列へP5:P19の差分（最終累計−P5）だけを書き込んだ年度ブックも出力します。G列は年度管理ブック側の数式に任せます。</div>
-          </div>
         </div>
 
         <div class="input-grid">
@@ -96,7 +89,7 @@
             <div class="hint">Takeoff Timeに+9時間した日付で抽出します。</div>
           </div>
           <div>
-            <label for="vehicleNameSelect">CSVのVehicle Name</label>
+            <label for="vehicleNameSelect">Vehicle Name</label>
             <select id="vehicleNameSelect" disabled><option value="">CSV読込後に自動表示</option></select>
             <div class="hint">選択したVehicle Nameのフライトだけを転記し、登録記号を自動入力します。複数ある場合はここで選択してください。</div>
           </div>
@@ -110,17 +103,23 @@
             <label for="pilotName">操縦者名</label>
             <input id="pilotName" type="text" placeholder="例：山田 太郎" />
           </div>
-          <div>
-            <label for="purposeText">飛行の目的</label>
-            <input id="purposeText" type="text" value="橋梁定期点検" />
-          </div>
-
-          <div class="span4">
-            <label>特定飛行の内容</label>
-            <div id="basicSpecificFlights" class="checkgrid"></div>
-            <button id="toggleSpecificBtn" type="button" class="ghost" style="margin-top:10px">その他の特定飛行を表示</button>
-            <div id="extraSpecificFlights" class="checkgrid hide"></div>
-            <div class="small-note">Excel出力時は短縮表記にします。例：特定：DID、目視外、30m未満</div>
+          <div class="span4 optional">
+            <details id="purposeDetails">
+              <summary>飛行の目的・特定飛行の内容を編集（通常は既定のままでOK）</summary>
+              <div class="input-grid mt">
+                <div class="span2">
+                  <label for="purposeText">飛行の目的</label>
+                  <input id="purposeText" type="text" value="橋梁定期点検" />
+                </div>
+                <div class="span4">
+                  <label>特定飛行の内容</label>
+                  <div id="basicSpecificFlights" class="checkgrid"></div>
+                  <button id="toggleSpecificBtn" type="button" class="ghost" style="margin-top:10px">その他の特定飛行を表示</button>
+                  <div id="extraSpecificFlights" class="checkgrid hide"></div>
+                  <div class="small-note">Excel出力時は短縮表記にします。例：特定：DID、目視外、30m未満</div>
+                </div>
+              </div>
+            </details>
           </div>
 
           <div class="span4 optional">
@@ -230,12 +229,12 @@
     </section>
 
     <section class="card mt">
-      <h2>2. 読み込み結果プレビュー</h2>
+      <h2>STEP 3｜読み込み結果を確認</h2>
       <div id="preview" class="table-wrap"><table><tbody><tr><td>まだ読み込んでいません。</td></tr></tbody></table></div>
     </section>
   </div>
 
-  <script src="js/app.js?v=v27-fixed-id-required-20260610"></script>
+  <script src="js/app.js?v=v28-ui-cleanup-20260712"></script>
 
 </body>
 </html>
