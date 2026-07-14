@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v45-cleanup-deadcode-20260712";
+const APP_BUILD_VERSION = "v46-skydio-cloud-csv-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -167,6 +167,53 @@ function guessRegistrationFromVehicleName(vehicleName) {
 function normalizeAddress(s) { return String(s || "").replace(/[\s　]+/g, "").replace(/丁目/g, "").replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0xFEE0)); }
 function isZeroCoord(lat, lon) { return Math.abs(Number(lat || 0)) < 0.000001 || Math.abs(Number(lon || 0)) < 0.000001; }
 function coordFallback(lat, lon) { if (isZeroCoord(lat, lon)) return "不明"; const a = String(lat || "").trim(); const b = String(lon || "").trim(); return a && b ? `${a},${b}` : "不明"; }
+
+// Skydio CloudのCSV（列名やLat/Lon構成が従来形式と異なる）を、従来形式のキーへ正規化する。
+function isSkydioCloudFormat(headers) {
+  return headers.includes("Vehicle") && !headers.includes("Vehicle Name") &&
+    (headers.includes("Takeoff Address") || headers.includes("Local Takeoff Time") || headers.includes("Land"));
+}
+function sanitizeCoord(v) {
+  const s = String(v ?? "").trim();
+  if (!s || /no .*available/i.test(s)) return "";
+  return Number.isFinite(Number(s)) ? s : "";
+}
+function formatSkydioAddress(addr) {
+  const s = String(addr || "").trim();
+  if (!s || /no address available/i.test(s)) return "";
+  // 例 "3310-1 穂積, 瑞穂市, Gifu, Japan" → 日本語部分だけ残し、市→地名→番地の順に並べ替える。
+  const parts = s.split(",").map(p => p.trim()).filter(p => /[^\x00-\x7f]/.test(p));
+  if (!parts.length) return "";
+  parts.reverse();
+  return parts.map(p => {
+    const toks = p.split(/\s+/).filter(Boolean);
+    const jp = toks.filter(t => /[^\x00-\x7f]/.test(t));
+    const other = toks.filter(t => !/[^\x00-\x7f]/.test(t));
+    return [...jp, ...other].join("");
+  }).join("");
+}
+function normalizeSkydioRow(row) {
+  const place = formatSkydioAddress(row["Takeoff Address"]) || "不明";
+  const lat = sanitizeCoord(row["Takeoff Latitude"]);
+  const lon = sanitizeCoord(row["Takeoff Longitude"]);
+  // Skydioは着陸座標を出さないため、離陸座標・離陸場所を着陸にも流用する。
+  return {
+    "Vehicle Name": String(row["Vehicle"] || "").trim(),
+    "Flight ID": String(row["Flight ID"] || "").trim(),
+    "Takeoff Time": String(row["Takeoff"] || "").trim(),
+    "Takeoff Latitude": lat,
+    "Takeoff Longitude": lon,
+    "Land Time": String(row["Land"] || "").trim(),
+    "Land Latitude": lat,
+    "Land Longitude": lon,
+    _takeoffPlace: place,
+    _landPlace: place
+  };
+}
+function normalizeCsvRows(rows) {
+  if (!rows.length) return rows;
+  return isSkydioCloudFormat(Object.keys(rows[0])) ? rows.map(normalizeSkydioRow) : rows;
+}
 
 function detectDelimiter(firstLine) {
   const counts = { "\t":0, ",":0, ";":0 };
@@ -786,14 +833,20 @@ async function reverseGeocode(lat, lon) {
   }
 }
 async function enrichLocations(rows) {
-  const total = rows.length * 2;
+  // 既に住所が入っている行（Skydio Cloud形式）は逆ジオコーディングをスキップする。
+  const total = rows.reduce((n, r) => n + (r._takeoffPlace == null ? 1 : 0) + (r._landPlace == null ? 1 : 0), 0);
+  if (!total) return;
   let done = 0;
   setStatus(`緯度経度から地名を取得しています... (0/${total})`, "warn", true);
   for (const row of rows) {
-    row._takeoffPlace = await reverseGeocode(row["Takeoff Latitude"], row["Takeoff Longitude"]);
-    done++; setStatus(`緯度経度から地名を取得しています... (${done}/${total})`, "warn", true);
-    row._landPlace = await reverseGeocode(row["Land Latitude"], row["Land Longitude"]);
-    done++; setStatus(`緯度経度から地名を取得しています... (${done}/${total})`, "warn", true);
+    if (row._takeoffPlace == null) {
+      row._takeoffPlace = await reverseGeocode(row["Takeoff Latitude"], row["Takeoff Longitude"]);
+      done++; setStatus(`緯度経度から地名を取得しています... (${done}/${total})`, "warn", true);
+    }
+    if (row._landPlace == null) {
+      row._landPlace = await reverseGeocode(row["Land Latitude"], row["Land Longitude"]);
+      done++; setStatus(`緯度経度から地名を取得しています... (${done}/${total})`, "warn", true);
+    }
   }
 }
 
@@ -2313,17 +2366,21 @@ async function readSelectedCsv() {
   if (!files.length) { setStatus("CSVを選択してください。", "warn"); return; }
   let totalAdded = 0;
   let totalSkipped = 0;
+  let totalDropped = 0;
   const errorsAll = [];
   try {
     for (const file of files) {
       const text = await readCsvFileText(file);
-      const newRows = prepareRows(parseDelimited(text));
+      const newRows = prepareRows(normalizeCsvRows(parseDelimited(text)));
       const errors = validateHeaders(newRows);
       if (errors.length) {
         errorsAll.push(`${file.name}: ${errors.join(" / ")}`);
         continue;
       }
-      const result = appendParsedRows(newRows, file.name);
+      // 飛行時間0分（中断・GPS未取得など）の行は除外する。
+      const flightRows = newRows.filter(r => flightMinutes(r) > 0);
+      totalDropped += newRows.length - flightRows.length;
+      const result = appendParsedRows(flightRows, file.name);
       totalAdded += result.added;
       totalSkipped += result.skipped;
     }
@@ -2333,7 +2390,7 @@ async function readSelectedCsv() {
       refreshAfterCsvChange("err", errorsAll.join(" / "));
       return;
     }
-    const msg = `${files.length}ファイルを処理しました。追加 ${totalAdded}件 / 重複除外 ${totalSkipped}件 / キャッシュ合計 ${parsedRows.length}件。` + (errorsAll.length ? ` 注意：${errorsAll.join(" / ")}` : "");
+    const msg = `${files.length}ファイルを処理しました。追加 ${totalAdded}件 / 重複除外 ${totalSkipped}件${totalDropped ? ` / 0分除外 ${totalDropped}件` : ""} / キャッシュ合計 ${parsedRows.length}件。` + (errorsAll.length ? ` 注意：${errorsAll.join(" / ")}` : "");
     refreshAfterCsvChange(errorsAll.length ? "warn" : "ok", msg);
   } catch (e) {
     console.error(e);
