@@ -16,7 +16,7 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 
 const DEFAULT_MS_CLIENT_ID = "0cac3fec-2429-4ac8-afdc-0a8072962de2";
 const DEFAULT_MS_TENANT_ID = "de4df448-bb18-4ea6-89fa-ab4c1a1f2cfb";
-const APP_BUILD_VERSION = "v46-skydio-cloud-csv-20260712";
+const APP_BUILD_VERSION = "v47-overwrite-guard-20260712";
 
 const DEFAULT_ROOT_FOLDER_PATH = "01.ドローン飛行日誌";
 const DEFAULT_YEARBOOK_RELATIVE_PATH = "年度管理/2026_飛行時間.xlsx";
@@ -954,11 +954,13 @@ async function loadYearbook(file, registrationId, selectedDate, dayFlightHours=n
   const previousHours = sumYearbookRowHoursBeforeTargetDate(sheetDoc, rowNum, dateCol);
   const totalHoursFromG = getCellNumber(sheetDoc, `G${rowNum}`);
   const targetAddr = `${dateCol}${rowNum}`;
+  // 上書き確認のため、書込先セルの現在値を書き換え前に読んでおく。
+  const existingValue = getCellNumber(sheetDoc, targetAddr);
 
   // 読み取りだけの場合。P5はG列総飛行時間ではなく、対象日の前日までの累計を使う。
   if (dayFlightHours == null) {
     const gNote = Number.isFinite(totalHoursFromG) ? ` / G列現在値 ${totalHoursFromG} 時間` : "";
-    return { previousHours, updatedBlob:null, sheetName:info.name, rowNum, dateCol, targetAddr, dayHours:null, message:`年度ブック ${info.name}!${rowNum}行目から対象日前までの従前総飛行時間 ${previousHours} 時間を算出${gNote}` };
+    return { previousHours, updatedBlob:null, sheetName:info.name, rowNum, dateCol, targetAddr, existingValue, dayHours:null, message:`年度ブック ${info.name}!${rowNum}行目から対象日前までの従前総飛行時間 ${previousHours} 時間を算出${gNote}` };
   }
 
   // 年度管理ブックには「P5:P19の差分」だけを書き込む。
@@ -969,7 +971,7 @@ async function loadYearbook(file, registrationId, selectedDate, dayFlightHours=n
   zip.file(info.path, serializeXml(sheetDoc));
   if (zip.file("xl/workbook.xml")) zip.file("xl/workbook.xml", setWorkbookCalcOnLoad(await zip.file("xl/workbook.xml").async("string")));
   const updatedBlob = await zip.generateAsync({ type:"blob", mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  return { previousHours, updatedBlob, sheetName:info.name, rowNum, dateCol, targetAddr, dayHours:roundedDayHours, message:`年度ブック ${info.name}!${targetAddr} にP5:P19の差分 ${roundedDayHours} 時間を書き込み（G列は未更新）` };
+  return { previousHours, updatedBlob, sheetName:info.name, rowNum, dateCol, targetAddr, existingValue, dayHours:roundedDayHours, message:`年度ブック ${info.name}!${targetAddr} にP5:P19の差分 ${roundedDayHours} 時間を書き込み（G列は未更新）` };
 }
 
 
@@ -1689,6 +1691,21 @@ async function uploadDiaryToOneDrive(blob, filename, registrationId, vehicleName
     body: blob
   });
   return `${baseFolder.label}/${subfolderName}/${filename}`;
+}
+// 同名の飛行日誌が保存先フォルダに既にあるかを調べる（上書き確認用）。
+// 確認に失敗した場合は処理を止めず null を返す。
+async function findExistingDiaryFile(filename, registrationId, vehicleName) {
+  try {
+    const subfolderName = sanitizeFileNamePart(buildDiaryOutputSubfolderName(registrationId, vehicleName), "folder");
+    const baseFolder = await getOutputBaseFolder();
+    const subfolder = await findChildItemByName(baseFolder.driveId, baseFolder.itemId, subfolderName);
+    if (!subfolder?.folder) return null;
+    const existing = await findChildItemByName(baseFolder.driveId, subfolder.id, filename);
+    return existing?.file ? existing : null;
+  } catch (e) {
+    console.warn("既存の飛行日誌ファイルの確認をスキップしました", e);
+    return null;
+  }
 }
 async function trySaveDiaryToOneDrive(blob, filename, registrationId, vehicleName) {
   if (!shouldSaveDiaryToOneDrive()) return { ok: false, message: "" };
@@ -2495,6 +2512,27 @@ async function downloadWorkbook() {
     const stamp = `${now.getFullYear()}${pad2(now.getMonth()+1)}${pad2(now.getDate())}_${pad2(now.getHours())}${pad2(now.getMinutes())}`;
     const dateStamp = selectedDate.replaceAll("-", "");
     const diaryName = buildDiaryOutputFileName(selectedDate, registrationIdForYearbook, vehicleNameForFile);
+
+    // 重複ガード：同じ日・同じ機体の記録が既にある場合は、書き込み前に上書き確認する。
+    setStatus("既存の記録を確認中...", "warn", true);
+    const overwriteWarnings = [];
+    if (usingOneDrive && await findExistingDiaryFile(diaryName, registrationIdForYearbook, vehicleNameForFile)) {
+      overwriteWarnings.push(`・飛行日誌ファイル「${diaryName}」は既に保存されています`);
+    }
+    const existingHours = yearbookRead.existingValue;
+    if (Number.isFinite(existingHours) && existingHours > 0) {
+      overwriteWarnings.push(`・年度管理ブックの ${yearbookResult.targetAddr} に既に ${existingHours} 時間が入力されています`);
+    }
+    if (overwriteWarnings.length) {
+      const proceed = window.confirm(
+        `同じ日・同じ機体の記録が既に存在します。\n\n${overwriteWarnings.join("\n")}\n\n` +
+        `続行すると既存のデータは上書きされます（年度管理の飛行時間は ${Math.round(dayHours*100)/100} 時間で置き換え）。\n上書きして処理を続けますか？`
+      );
+      if (!proceed) {
+        setStatus("処理を中止しました。既存のデータは変更していません。", "warn");
+        return;
+      }
+    }
 
     if (usingOneDrive && yearbookResult.updatedBlob) {
       setStatus("SharePointの年度管理ブックを更新し、飛行日誌を保存中...", "warn", true);
